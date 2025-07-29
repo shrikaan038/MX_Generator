@@ -1,0 +1,42 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyCharm / IntelliJ project files
+.idea/
+
+# VSCode project settings
+.vscode/
+
+# Environment files
+.env
+*.env
+.env.*
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Logs and runtime files
+*.log
+*.pid
+*.seed
+*.bak
+
+# XML or generated test output (optional)
+*.xml
+
+# Python virtual environments
+venv/
+env/
+.venv/
+
+# Build, dist and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Streamlit cache
+.streamlit/

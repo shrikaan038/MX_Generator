@@ -157,6 +157,32 @@ def generate_pacs008_xml(data, channel_type):
     elif channel_type == 'fedwire':
         cre_dt_tm_formatted = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')  # Default for Fedwire, with 'Z'
         app_hdr = ""  # No AppHdr for Fedwire
+
+    if channel_type == 'swift':
+        app_hdr = f"""<?xml version="1.0" encoding="UTF-8"?>
+    <AppHdr xmlns="urn:iso:std:iso:20022:tech:xsd:head.001.001.02">
+        <Fr>
+            <FIId>
+                <FinInstnId>
+                    <BICFI>{data.get('instgAgtBICFI', '')}</BICFI>
+                </FinInstnId>
+            </FIId>
+        </Fr>
+        <To>
+            <FIId>
+                <FinInstnId>
+                    <BICFI>{data.get('instdAgtBICFI', '')}</BICFI>
+                </FinInstnId>
+            </FIId>
+        </To>
+        <BizMsgIdr>{msg_id}</BizMsgIdr>
+        <MsgDefIdr>pacs.008.001.08</MsgDefIdr>
+        <BizSvc>swift.cbprplus.02</BizSvc>
+        <CreDt>{cre_dt_tm_formatted}</CreDt>
+    </AppHdr>
+    """
+
+
     # Helper function for agent FinInstnId based on type
     def get_agent_fin_instn_id_xml(agent_data_key_bicfi, mmb_id_fedwire, pacs_type):
         if pacs_type == 'fedwire':
@@ -173,7 +199,7 @@ def generate_pacs008_xml(data, channel_type):
 
     currency = data.get('currency', 'USD') # Get currency from data
 
-    return f"""<?xml version="1.0" encoding="UTF-8"?>
+    return f"""{app_hdr}
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xsi:schemaLocation="urn:iso:std:iso:20022:tech:xsd:pacs.008.001.08 pacs.008.001.08.xsd">
