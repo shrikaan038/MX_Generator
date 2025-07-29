@@ -51,12 +51,19 @@ st.markdown("""
 
 st.markdown("<h1 class='main-header'>ISO 20022 XML Payment Generator</h1>", unsafe_allow_html=True)
 
+# Function to get current datetime in required format (+HH:MM offset)
+def get_current_datetime_with_offset():
+    now = datetime.datetime.now(datetime.timezone.utc)
+    # Format to YYYY-MM-DDTHH:MM:SS+00:00 for UTC, which is common for SWIFT CBPR+
+    return now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
 # Initialize session state for form data and generated XML
 if 'form_data' not in st.session_state:
     st.session_state.form_data = {
         'pain001': {
             'msgId': f"MSG{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
-            'creDtTm': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'creDtTm': get_current_datetime_with_offset(),
             'initgPtyNm': 'Originator Company',
             'pmtInfId': f"PMTINF{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
             'pmtMtd': 'TRF',
@@ -84,7 +91,7 @@ if 'form_data' not in st.session_state:
         },
         'pacs008': {
             'msgId': '', # Initialized empty, will be set by input field based on channel type
-            'creDtTm': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'creDtTm': get_current_datetime_with_offset(),
             'intrBkSttlmDt': (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d'),
             'sttlmMtd': 'CLRG', # Default to CLRG, will be dynamically set
             'instgAgtBICFI': 'INSTGB2LXXX', # Used for SWIFT only now

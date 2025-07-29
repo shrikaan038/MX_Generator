@@ -1,6 +1,8 @@
 # xml_generator_v03.py
-
+import datetime
 import uuid
+import uuid
+import re # Ensure re is imported for potential future use
 
 def generate_pain001_xml(data):
     """
@@ -129,7 +131,7 @@ def generate_pain001_xml(data):
 </Document>
 """
 
-def generate_pacs008_xml(data, pacs008_type='fedwire'):
+def generate_pacs008_xml(data, channel_type):
     """
     Generates a pacs.008 (FI to FI Customer Credit Transfer) XML message.
 
@@ -145,7 +147,16 @@ def generate_pacs008_xml(data, pacs008_type='fedwire'):
     Returns:
         str: The generated pacs.008 XML string.
     """
+    msg_id = data.get('msgId', '')
+    app_hdr = ""
+    cre_dt_tm_formatted = ""
 
+    if channel_type == 'swift':
+        cre_dt_tm_formatted = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+    elif channel_type == 'fedwire':
+        cre_dt_tm_formatted = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')  # Default for Fedwire, with 'Z'
+        app_hdr = ""  # No AppHdr for Fedwire
     # Helper function for agent FinInstnId based on type
     def get_agent_fin_instn_id_xml(agent_data_key_bicfi, mmb_id_fedwire, pacs_type):
         if pacs_type == 'fedwire':
@@ -169,11 +180,11 @@ def generate_pacs008_xml(data, pacs008_type='fedwire'):
     <FIToFICstmrCdtTrf>
         <GrpHdr>
             <MsgId>{data.get('msgId', '')}</MsgId>
-            <CreDtTm>{data.get('creDtTm', '')}</CreDtTm>
+            <CreDtTm>{cre_dt_tm_formatted}</CreDtTm>
             <NbOfTxs>1</NbOfTxs>            
             <SttlmInf>
                 <SttlmMtd>{data.get('sttlmMtd', '')}</SttlmMtd>
-                {"" if pacs008_type == 'swift' else """
+                {"" if channel_type == 'swift' else """
                 <ClrSys> 
                     <Cd>FDW</Cd>
                 </ClrSys> 
@@ -190,7 +201,7 @@ def generate_pacs008_xml(data, pacs008_type='fedwire'):
                 <SvcLvl>
                     <Cd>NURG</Cd>
                 </SvcLvl>
-                {"" if pacs008_type == 'swift' else """
+                {"" if channel_type == 'swift' else """
                 <LclInstrm>
                     <Prtry>CTRC</Prtry>
                 </LclInstrm>
@@ -202,12 +213,12 @@ def generate_pacs008_xml(data, pacs008_type='fedwire'):
             <ChrgBr>SHAR</ChrgBr>
             <InstgAgt>
                 <FinInstnId>
-                    {get_agent_fin_instn_id_xml('instgAgtBICFI', '011104238', pacs008_type)}
+                    {get_agent_fin_instn_id_xml('instgAgtBICFI', '011104238', channel_type)}
                 </FinInstnId>
             </InstgAgt>
             <InstdAgt>
                 <FinInstnId>
-                    {get_agent_fin_instn_id_xml('instdAgtBICFI', '021040078', pacs008_type)}
+                    {get_agent_fin_instn_id_xml('instdAgtBICFI', '021040078', channel_type)}
                 </FinInstnId>
             </InstdAgt>
             <Dbtr>
