@@ -34,16 +34,17 @@ Supports:
 Set up a virtual environment (optional but recommended):
 
 python -m venv venv
-source venv/bin/activate  
-# Windows: venv\Scripts\activate
+
+venv/bin/activate  
 
 
-Install dependencies:
+### Install dependencies:
 
 pip install streamlit
 
 ##  How to Use
 🔌 Run the App
+
 streamlit run app.py
 
 ## Use in Browser
@@ -89,9 +90,3 @@ This project is open-source and provided under the MIT License.
 
 ## Support
 Feel free to open an Issue or contribute improvements via Pull Requests!
-
-
-### ✅ Final Step
-
-Make sure you save this content to a `README.md` file at the root of your repo. Let me know i
-
