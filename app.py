@@ -60,7 +60,7 @@ def get_current_datetime_with_offset():
 
 # Initialize session state for form data and generated XML
 if 'form_data' not in st.session_state:
-    st.session_state.form_data = {
+    st.session_state.form_data = { #Holds default form values for pain001 and pacs008.
         'pain001': {
             'msgId': f"MSG{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
             'creDtTm': get_current_datetime_with_offset(),
@@ -119,7 +119,7 @@ if 'form_data' not in st.session_state:
         }
     }
 if 'generated_xml' not in st.session_state:
-    st.session_state.generated_xml = ""
+    st.session_state.generated_xml = "" #Stores generated XML output
 if 'message_type' not in st.session_state:
     st.session_state.message_type = 'pacs008' # Default to pacs008 for initial view
 
@@ -214,7 +214,7 @@ else: # pacs008
             st.session_state.form_data['pacs008']['sttlmMtd'] = 'CLRG'
         sttlm_mtd_index = 0
     else: # SWIFT
-        sttlm_mtd_options = ['INDA', 'COVE'] # Assuming INDA and COVE are valid for SWIFT
+        sttlm_mtd_options = ['INDA', 'INGA', 'COVE'] # Assuming INDA, INGA and COVE are valid for SWIFT
         if st.session_state.form_data['pacs008']['sttlmMtd'] == 'CLRG' or st.session_state.form_data['pacs008']['sttlmMtd'] not in sttlm_mtd_options:
             st.session_state.form_data['pacs008']['sttlmMtd'] = 'INDA' # Set a default for SWIFT
         sttlm_mtd_index = sttlm_mtd_options.index(st.session_state.form_data['pacs008']['sttlmMtd'])
