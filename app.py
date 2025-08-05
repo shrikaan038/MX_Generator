@@ -181,10 +181,12 @@ if st.session_state.message_type == 'pain001':
                                                                              st.session_state.form_data['pain001'][
                                                                                  'reqdExctnDt'],
                                                                              key="pain001_reqdExctnDt")
-        st.session_state.form_data['pain001']['currency'] = st.text_input("Currency (e.g., EUR, USD)",
-                                                                          value=st.session_state.form_data['pain001'][
-                                                                              'currency'], key="pain001_currency")
-
+        st.session_state.form_data['pain001']['currency'] = st.text_input(
+            "Currency (e.g., EUR, USD)",
+            value=st.session_state.form_data['pain001']['currency'],
+            key="pain001_currency",
+            help="Use valid ISO 4217 currency codes, e.g., USD for US Dollars, EUR for Euro"
+        )
     st.markdown("### Debtor Details")
     col1, col2, col3 = st.columns(3)
     with col1:
