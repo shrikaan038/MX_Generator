@@ -216,39 +216,39 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
         if channel_type == 'fedwire':
             if fedwire_type == 'domestic' and mmb_id:
                 return (f"""<FinInstnId>
-                            <ClrSysMmbId>
-                                <ClrSysId>
-                                    <Cd>USABA</Cd>
-                                </ClrSysId>
-                                <MmbId>{mmb_id}</MmbId>
-                            </ClrSysMmbId>
-                            <Nm>{name}</Nm>
-                            <PstlAdr>
-                                <StrtNm>{street}</StrtNm>
-                                <BldgNb>{bldg_nb}</BldgNb>
-                                <PstCd>{pst_cd}</PstCd>
-                                <TwnNm>{twn_nm}</TwnNm>
-                                <Ctry>{ctry}</Ctry>
-                            </PstlAdr>
-                        </FinInstnId>""")
+                    <ClrSysMmbId>
+                        <ClrSysId>
+                            <Cd>USABA</Cd>
+                        </ClrSysId>
+                        <MmbId>{mmb_id}</MmbId>
+                    </ClrSysMmbId>
+                    <Nm>{name}</Nm>
+                    <PstlAdr>
+                        <StrtNm>{street}</StrtNm>
+                        <BldgNb>{bldg_nb}</BldgNb>
+                        <PstCd>{pst_cd}</PstCd>
+                        <TwnNm>{twn_nm}</TwnNm>
+                        <Ctry>{ctry}</Ctry>
+                    </PstlAdr>
+                </FinInstnId>""")
             if fedwire_type == 'international':
                 if agent_type == 'DbtrAgt' and mmb_id:
                     return (f"""<FinInstnId>
-                                                <ClrSysMmbId>
-                                                    <ClrSysId>
-                                                        <Cd>USABA</Cd>
-                                                    </ClrSysId>
-                                                    <MmbId>{mmb_id}</MmbId>
-                                                </ClrSysMmbId>
-                                                <Nm>{name}</Nm>
-                                                <PstlAdr>
-                                                    <StrtNm>{street}</StrtNm>
-                                                    <BldgNb>{bldg_nb}</BldgNb>
-                                                    <PstCd>{pst_cd}</PstCd>
-                                                    <TwnNm>{twn_nm}</TwnNm>
-                                                    <Ctry>{ctry}</Ctry>
-                                                </PstlAdr>
-                                            </FinInstnId>""")
+                                    <ClrSysMmbId>
+                                        <ClrSysId>
+                                            <Cd>USABA</Cd>
+                                        </ClrSysId>
+                                        <MmbId>{mmb_id}</MmbId>
+                                    </ClrSysMmbId>
+                                    <Nm>{name}</Nm>
+                                    <PstlAdr>
+                                        <StrtNm>{street}</StrtNm>
+                                        <BldgNb>{bldg_nb}</BldgNb>
+                                        <PstCd>{pst_cd}</PstCd>
+                                        <TwnNm>{twn_nm}</TwnNm>
+                                        <Ctry>{ctry}</Ctry>
+                                    </PstlAdr>
+                                </FinInstnId>""")
                 if agent_type == 'CdtrAgt' and bicfi:
                     return f"<FinInstnId><BICFI>{bicfi}</BICFI></FinInstnId>"
 
