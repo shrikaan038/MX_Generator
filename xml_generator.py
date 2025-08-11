@@ -18,7 +18,7 @@ def generate_pain001_xml(data):
     Returns:
         str: The generated pain.001 XML string.
     """
-    # The logic for pain001 is not the source of the current issue and remains unchanged.
+    # For SEPA pain.001, IBAN is mandatory - no changes needed here
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <Document xmlns="urn:iso:std:iso:20022:tech:xsd:pain.001.001.09"
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
@@ -98,7 +98,7 @@ def generate_pain001_xml(data):
                     <InstrPrty>NORM</InstrPrty>
                 </PmtTpInf>
                 <Amt>
-                    <InstdAmt Ccy="EUR">{data.get('instdAmt', 0.00):.2f}</InstdAmt>
+                    <InstdAmt Ccy="{data.get('currency', 'EUR')}">{data.get('instdAmt', 0.00):.2f}</InstdAmt>
                 </Amt>
                 <Dbtr>
                     <Nm>{data.get('dbtrNm', '')}</Nm>
@@ -120,7 +120,7 @@ def generate_pain001_xml(data):
                 </CdtrAgt>
                 <Cdtr>
                     <Nm>{data.get('cdtrNm', '')}</Nm>
-                </Dbtr>
+                </Cdtr>
                 <CdtrAcct>
                     <Id>
                         <IBAN>{data.get('cdtrAcctIBAN', '')}</IBAN>
@@ -131,6 +131,82 @@ def generate_pain001_xml(data):
     </CstmrCdtTrfInitn>
 </Document>
 """
+
+
+def is_iban_country(country_code):
+    """
+    Check if a country code is part of the IBAN registry.
+    This is a simplified list - in production, this should be more comprehensive.
+    """
+    iban_countries = {
+        'AD', 'AE', 'AL', 'AT', 'AZ', 'BA', 'BE', 'BG', 'BH', 'BR', 'BY', 'CH',
+        'CR', 'CY', 'CZ', 'DE', 'DK', 'DO', 'EE', 'EG', 'ES', 'FI', 'FO', 'FR',
+        'GB', 'GE', 'GI', 'GL', 'GR', 'GT', 'HR', 'HU', 'IE', 'IL', 'IS', 'IT',
+        'JO', 'KW', 'KZ', 'LB', 'LC', 'LI', 'LT', 'LU', 'LV', 'MC', 'MD', 'ME',
+        'MK', 'MR', 'MT', 'MU', 'NL', 'NO', 'PK', 'PL', 'PS', 'PT', 'QA', 'RO',
+        'RS', 'SA', 'SE', 'SI', 'SK', 'SM', 'TN', 'TR', 'UA', 'VG', 'XK'
+    }
+    return country_code.upper() in iban_countries
+
+
+def get_account_xml(account_number, country_code, channel_type, fedwire_type, sender_country='US'):
+    """
+    Generate account XML based on payment scheme rules.
+
+    Args:
+        account_number: The account number/IBAN
+        country_code: The country code for the account
+        channel_type: 'fedwire' or 'swift'
+        fedwire_type: 'domestic' or 'international' (for fedwire only)
+        sender_country: The sender country code (default 'US' for fedwire)
+
+    Returns:
+        str: XML fragment for the account
+    """
+
+    if channel_type == 'fedwire':
+        if fedwire_type == 'domestic':
+            # Fedwire Domestic (US -> US): Never use IBAN, always use account number
+            return f"""<Id>
+                <Othr>
+                    <Id>{account_number}</Id>
+                </Othr>
+            </Id>"""
+
+        elif fedwire_type == 'international':
+            if is_iban_country(country_code):
+                # Fedwire International to IBAN country: Use IBAN
+                return f"""<Id>
+                <IBAN>{account_number}</IBAN>
+            </Id>"""
+            else:
+                # Fedwire International to Non-IBAN country: Use account number
+                return f"""<Id>
+                <Othr>
+                    <Id>{account_number}</Id>
+                </Othr>
+            </Id>"""
+
+    elif channel_type == 'swift':
+        if is_iban_country(country_code):
+            # SWIFT CBPR+ to IBAN country: Use IBAN
+            return f"""<Id>
+                <IBAN>{account_number}</IBAN>
+            </Id>"""
+        else:
+            # SWIFT CBPR+ to Non-IBAN country: Use account number
+            return f"""<Id>
+                <Othr>
+                    <Id>{account_number}</Id>
+                </Othr>
+            </Id>"""
+
+    # Default fallback - should not reach here with proper validation
+    return f"""<Id>
+        <Othr>
+            <Id>{account_number}</Id>
+        </Othr>
+    </Id>"""
 
 
 def generate_pacs008_xml(data, channel_type, fedwire_type):
@@ -252,20 +328,6 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                 if agent_type == 'CdtrAgt' and bicfi:
                     return f"<FinInstnId><BICFI>{bicfi}</BICFI></FinInstnId>"
 
-        # If no BICFI or MmbId is present, fall back to Name and Address
-        # if name:
-        #     # Note: The <FinInstnId> is included here and not in the main function
-        #     return f"""<FinInstnId>
-        #         <Nm>{name}</Nm>
-        #         <PstlAdr>
-        #             <StrtNm>{street}</StrtNm>
-        #             <BldgNb>{bldg_nb}</BldgNb>
-        #             <PstCd>{pst_cd}</PstCd>
-        #             <TwnNm>{twn_nm}</TwnNm>
-        #             <Ctry>{ctry}</Ctry>
-        #         </PstlAdr>
-        #     </FinInstnId>"""
-
         return ""  # Return empty string if no valid data is available
 
     def get_inst_agent_xml(agent_type, channel_type, data):
@@ -278,8 +340,25 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             mmb_id_key = 'instgAgtMmbId' if agent_type == 'InstgAgt' else 'instdAgtMmbId'
             return f"""<FinInstnId><ClrSysMmbId><ClrSysId><Cd>USABA</Cd></ClrSysId><MmbId>{data.get(mmb_id_key, '')}</MmbId></ClrSysMmbId></FinInstnId>"""
 
-
     currency = data.get('currency', 'USD')
+
+    # Get account XML based on scheme rules
+    dbtr_country = data.get('dbtrCtry', 'US')
+    cdtr_country = data.get('cdtrCtry', 'US')
+
+    dbtr_acct_xml = get_account_xml(
+        data.get('dbtrAcctIBAN', ''),
+        dbtr_country,
+        channel_type,
+        fedwire_type
+    )
+
+    cdtr_acct_xml = get_account_xml(
+        data.get('cdtrAcctIBAN', ''),
+        cdtr_country,
+        channel_type,
+        fedwire_type
+    )
 
     # Generate the XML content
     xml_content = f"""{app_hdr}
@@ -329,9 +408,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                 </PstlAdr>
             </Dbtr>
             <DbtrAcct>
-                <Id>
-                    <IBAN>{data.get('dbtrAcctIBAN', '')}</IBAN>
-                </Id>
+                {dbtr_acct_xml}
             </DbtrAcct>
             <DbtrAgt>
                 {get_agent_xml('DbtrAgt', channel_type, fedwire_type, data)}
@@ -350,9 +427,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                 </PstlAdr>
             </Cdtr>
             <CdtrAcct>
-                <Id>
-                    <IBAN>{data.get('cdtrAcctIBAN', '')}</IBAN>
-                </Id>
+                {cdtr_acct_xml}
             </CdtrAcct>
             <RmtInf>
                 <Ustrd>{data.get('ustrdRmtInf', '')}</Ustrd>

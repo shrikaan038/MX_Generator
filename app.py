@@ -3,7 +3,7 @@ import streamlit as st
 import datetime
 import uuid
 import random
-from xml_generator import generate_pain001_xml, generate_pacs008_xml
+from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
 
@@ -57,6 +57,13 @@ st.markdown("""
         border-radius: 0.375rem;
         border: 1px solid #fecaca;
         margin: 0.5rem 0;
+    }
+    .info-box {
+        background-color: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin: 1rem 0;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -123,6 +130,50 @@ def validate_usaba_fields(data, channel_type, fedwire_type):
     return errors
 
 
+def get_account_field_help(channel_type, fedwire_type, country_code, sender_country='US'):
+    """
+    Generate help text for account fields based on the payment scheme rules.
+    """
+    if channel_type == 'fedwire':
+        if fedwire_type == 'domestic':
+            return "Enter US account number (IBAN not used for Fedwire domestic)"
+        elif fedwire_type == 'international':
+            if is_iban_country(country_code):
+                return "Enter IBAN (required for IBAN countries in Fedwire international)"
+            else:
+                return "Enter local account number (IBAN not available for this country)"
+    elif channel_type == 'swift':
+        if is_iban_country(country_code):
+            return "Enter IBAN (required for IBAN countries in SWIFT CBPR+)"
+        else:
+            return "Enter local account number (IBAN not available for this country)"
+
+    return "Enter account number or IBAN"
+
+
+def get_account_field_label(channel_type, fedwire_type, country_code, account_type='Debtor'):
+    """
+    Generate appropriate label for account fields.
+    """
+    base_label = f"{account_type} Account"
+
+    if channel_type == 'fedwire':
+        if fedwire_type == 'domestic':
+            return f"{base_label} Number"
+        elif fedwire_type == 'international':
+            if is_iban_country(country_code):
+                return f"{base_label} IBAN"
+            else:
+                return f"{base_label} Number"
+    elif channel_type == 'swift':
+        if is_iban_country(country_code):
+            return f"{base_label} IBAN"
+        else:
+            return f"{base_label} Number"
+
+    return f"{base_label} (IBAN/Number)"
+
+
 # Initialize session state for form data and generated XML
 if 'form_data' not in st.session_state:
     st.session_state.form_data = {
@@ -149,7 +200,7 @@ if 'form_data' not in st.session_state:
             'cdtrPstCd': 'SW1A0AA',
             'cdtrTwnNm': 'London',
             'cdtrCtry': 'GB',
-            'cdtrAcctIBAN': 'GB98765432109876543210',
+            'cdtrAcctIBAN': 'GB33BUKB20201555555555',
             'instdAmt': 100.00,
             'ustrdRmtInf': 'Payment for services rendered - Invoice ABC123',
             'currency': 'EUR'
@@ -170,7 +221,7 @@ if 'form_data' not in st.session_state:
             'dbtrPstCd': '12345',
             'dbtrTwnNm': 'Debtor City',
             'dbtrCtry': 'US',
-            'dbtrAcctIBAN': 'US12345678901234567890',
+            'dbtrAcctIBAN': '123456789012',
             'dbtrAgtBICFI_tx': 'DBTRUS33XXX',
             'cdtrAgtBICFI_tx': 'CDTRGB2LXXX',
             'dbtrAgtMmbId': '011104238',
@@ -193,7 +244,7 @@ if 'form_data' not in st.session_state:
             'cdtrPstCd': 'SW1A0AA',
             'cdtrTwnNm': 'London',
             'cdtrCtry': 'GB',
-            'cdtrAcctIBAN': 'GB98765432109876543210',
+            'cdtrAcctIBAN': 'GB33BUKB20201555555555',
             'instdAmt': 100.00,
             'ustrdRmtInf': 'Invoice 67890',
             'currency': 'USD'
@@ -251,6 +302,8 @@ if st.session_state.message_type == 'pain001':
             key="pain001_currency",
             help="Use valid ISO 4217 currency codes, e.g., USD for US Dollars, EUR for Euro"
         )
+
+    # SEPA uses IBAN - no change needed for pain001
     st.markdown("### Debtor Details")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -280,7 +333,8 @@ if st.session_state.message_type == 'pain001':
                                                                               value=
                                                                               st.session_state.form_data['pain001'][
                                                                                   'dbtrAcctIBAN'],
-                                                                              key="pain001_dbtrAcctIBAN")
+                                                                              key="pain001_dbtrAcctIBAN",
+                                                                              help="IBAN is mandatory for SEPA pain.001 messages")
         st.session_state.form_data['pain001']['dbtrAgtBICFI'] = st.text_input(
             "Debtor Agent BICFI (DbtrAgt.FinInstnId.BICFI)",
             value=st.session_state.form_data['pain001']['dbtrAgtBICFI'], key="pain001_dbtrAgtBICFI")
@@ -312,7 +366,8 @@ if st.session_state.message_type == 'pain001':
                                                                           help="Use 2-letter ISO country codes (e.g., US, GB, DE)")
         st.session_state.form_data['pain001']['cdtrAcctIBAN'] = st.text_input(
             "Creditor Account IBAN (CdtrAcct.Id.IBAN)", value=st.session_state.form_data['pain001']['cdtrAcctIBAN'],
-            key="pain001_cdtrAcctIBAN")
+            key="pain001_cdtrAcctIBAN",
+            help="IBAN is mandatory for SEPA pain.001 messages")
         st.session_state.form_data['pain001']['cdtrAgtBICFI'] = st.text_input(
             "Creditor Agent BICFI (CdtrAgt.FinInstnId.BICFI)",
             value=st.session_state.form_data['pain001']['cdtrAgtBICFI'], key="pain001_cdtrAgtBICFI")
@@ -348,6 +403,21 @@ else:  # pacs008
         ).lower()
     else:
         fedwire_type = None
+
+    # Display account format rules info box
+    if pacs008_channel_type_lower == 'fedwire':
+        if fedwire_type == 'domestic':
+            st.markdown(
+                '<div class="info-box">📋 <strong>Account Format Rule:</strong> Fedwire Domestic (US ➔ US) uses <strong>account numbers</strong>, not IBANs. Bank identification via ABA routing numbers in Agent fields.</div>',
+                unsafe_allow_html=True)
+        else:
+            st.markdown(
+                '<div class="info-box">📋 <strong>Account Format Rule:</strong> Fedwire International uses <strong>IBAN for IBAN countries</strong>, account numbers for non-IBAN countries.</div>',
+                unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="info-box">📋 <strong>Account Format Rule:</strong> SWIFT CBPR+ uses <strong>IBAN for IBAN countries</strong>, local account numbers for non-IBAN countries.</div>',
+            unsafe_allow_html=True)
 
     if pacs008_channel_type_lower == 'fedwire':
         sttlm_mtd_options = ['CLRG']
@@ -445,11 +515,17 @@ else:  # pacs008
                                                                           max_chars=2,
                                                                           help="Use 2-letter ISO country codes (e.g., US, GB, DE)")
     with col3:
-        st.session_state.form_data['pacs008']['dbtrAcctIBAN'] = st.text_input("Debtor Account IBAN (DbtrAcct.Id.IBAN)",
-                                                                              value=
-                                                                              st.session_state.form_data['pacs008'][
-                                                                                  'dbtrAcctIBAN'],
-                                                                              key="pacs008_dbtrAcctIBAN")
+        # Dynamic account field based on rules
+        dbtr_country = st.session_state.form_data['pacs008'].get('dbtrCtry', 'US')
+        dbtr_acct_label = get_account_field_label(pacs008_channel_type_lower, fedwire_type, dbtr_country, 'Debtor')
+        dbtr_acct_help = get_account_field_help(pacs008_channel_type_lower, fedwire_type, dbtr_country)
+
+        st.session_state.form_data['pacs008']['dbtrAcctIBAN'] = st.text_input(
+            dbtr_acct_label,
+            value=st.session_state.form_data['pacs008']['dbtrAcctIBAN'],
+            key="pacs008_dbtrAcctIBAN",
+            help=dbtr_acct_help
+        )
 
         # Dynamic input fields for Debtor Agent
         st.markdown("#### Debtor Agent")
@@ -521,9 +597,18 @@ else:  # pacs008
                                                                               'cdtrCtry'], key="pacs008_cdtrCtry",
                                                                           max_chars=2,
                                                                           help="Use 2-letter ISO country codes (e.g., US, GB, DE)")
+
+        # Dynamic account field for creditor based on rules
+        cdtr_country = st.session_state.form_data['pacs008'].get('cdtrCtry', 'GB')
+        cdtr_acct_label = get_account_field_label(pacs008_channel_type_lower, fedwire_type, cdtr_country, 'Creditor')
+        cdtr_acct_help = get_account_field_help(pacs008_channel_type_lower, fedwire_type, cdtr_country)
+
         st.session_state.form_data['pacs008']['cdtrAcctIBAN'] = st.text_input(
-            "Creditor Account IBAN (CdtrAcct.Id.IBAN)", value=st.session_state.form_data['pacs008']['cdtrAcctIBAN'],
-            key="pacs008_cdtrAcctIBAN")
+            cdtr_acct_label,
+            value=st.session_state.form_data['pacs008']['cdtrAcctIBAN'],
+            key="pacs008_cdtrAcctIBAN",
+            help=cdtr_acct_help
+        )
 
         # Dynamic input fields for Creditor Agent
         st.markdown("#### Creditor Agent")
