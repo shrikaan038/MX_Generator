@@ -149,6 +149,26 @@ def is_iban_country(country_code):
     return country_code.upper() in iban_countries
 
 
+def needs_exchange_rate(primary_ccy, secondary_ccy, channel_type, fedwire_type):
+    """
+    Determine if exchange rate is needed based on currencies and payment type.
+    """
+    if primary_ccy == secondary_ccy:
+        return False
+
+    # Based on the PDF logic - FX conversion needed when settlement and instruction currencies differ
+    return True
+
+
+def get_exchange_rate_xml(exchange_rate, primary_ccy, secondary_ccy):
+    """
+    Generate exchange rate XML element if needed.
+    """
+    if exchange_rate and primary_ccy != secondary_ccy:
+        return f"<XchgRate>{exchange_rate:.6f}</XchgRate>"
+    return ""
+
+
 def get_account_xml(account_number, country_code, channel_type, fedwire_type, sender_country='US'):
     """
     Generate account XML based on payment scheme rules.
@@ -221,7 +241,8 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                      dbtrCtry, dbtrAcctIBAN, dbtrAgtBICFI_tx/dbtrAgtMmbId,
                      cdtrAgtBICFI_tx/cdtrAgtMmbId, cdtrNm, cdtrStrtNm,
                      cdtrBldgNb, cdtrPstCd, cdtrTwnNm, cdtrCtry, cdtrAcctIBAN,
-                     instdAmt, ustrdRmtInf, plus new keys for agent addresses.
+                     instdAmt, intrBkSttlmAmt, ustrdRmtInf, primaryCurrency,
+                     secondaryCurrency, exchangeRate, plus agent address fields.
         channel_type (str): 'fedwire' or 'swift' to determine XML structure.
         fedwire_type (str): 'domestic' or 'international' to apply specific Fedwire rules.
     Returns:
@@ -230,6 +251,15 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
     msg_id = data.get('msgId', '')
     app_hdr = ""
     cre_dt_tm_formatted = ""
+
+    # Get currency information
+    primary_ccy = data.get('primaryCurrency', 'USD')
+    secondary_ccy = data.get('secondaryCurrency', 'USD')
+    exchange_rate = data.get('exchangeRate')
+
+    # Get amounts
+    settlement_amount = data.get('intrBkSttlmAmt', 0.00)
+    instructed_amount = data.get('instdAmt', 0.00)
 
     if channel_type == 'swift':
         cre_dt_tm_formatted = datetime.datetime.now().strftime('%Y-%m-%dT%H:%M:%S+00:00')
@@ -340,8 +370,6 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             mmb_id_key = 'instgAgtMmbId' if agent_type == 'InstgAgt' else 'instdAgtMmbId'
             return f"""<FinInstnId><ClrSysMmbId><ClrSysId><Cd>USABA</Cd></ClrSysId><MmbId>{data.get(mmb_id_key, '')}</MmbId></ClrSysMmbId></FinInstnId>"""
 
-    currency = data.get('currency', 'USD')
-
     # Get account XML based on scheme rules
     dbtr_country = data.get('dbtrCtry', 'US')
     cdtr_country = data.get('cdtrCtry', 'US')
@@ -359,6 +387,9 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
         channel_type,
         fedwire_type
     )
+
+    # Generate exchange rate XML if needed
+    exchange_rate_xml = get_exchange_rate_xml(exchange_rate, primary_ccy, secondary_ccy)
 
     # Generate the XML content
     xml_content = f"""{app_hdr}
@@ -387,9 +418,10 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                 </SvcLvl>
                 {f"<LclInstrm><Prtry>CTRC</Prtry></LclInstrm>" if channel_type == 'fedwire' else ""}
             </PmtTpInf>
-            <IntrBkSttlmAmt Ccy="{currency}">{data.get('instdAmt', 0.00):.2f}</IntrBkSttlmAmt>
+            <IntrBkSttlmAmt Ccy="{primary_ccy}">{settlement_amount:.2f}</IntrBkSttlmAmt>
             <IntrBkSttlmDt>{data.get('intrBkSttlmDt', '')}</IntrBkSttlmDt>
-            <InstdAmt Ccy="{currency}">{data.get('instdAmt', 0.00):.2f}</InstdAmt>
+            <InstdAmt Ccy="{secondary_ccy}">{instructed_amount:.2f}</InstdAmt>
+            {exchange_rate_xml}
             <ChrgBr>SHAR</ChrgBr>
             <InstgAgt>
                 {get_inst_agent_xml('InstgAgt', channel_type, data)}

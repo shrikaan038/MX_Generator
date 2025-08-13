@@ -3,6 +3,7 @@ import streamlit as st
 import datetime
 import uuid
 import random
+import requests
 from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
@@ -65,6 +66,21 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    .fx-info-box {
+        background-color: #f0f9ff;
+        border: 1px solid #7dd3fc;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin: 0.5rem 0;
+    }
+    .fx-rate-display {
+        background-color: #ecfdf5;
+        border: 1px solid #6ee7b7;
+        border-radius: 0.375rem;
+        padding: 0.75rem;
+        margin: 0.5rem 0;
+        font-weight: 600;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -80,6 +96,85 @@ def get_current_datetime_with_offset():
     now = datetime.datetime.now(datetime.timezone.utc)
     # Format to YYYY-MM-DDTHH:MM:SS+00:00 for UTC, which is common for SWIFT CBPR+
     return now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+
+
+def get_exchange_rate(from_currency, to_currency):
+    """
+    Fetch current exchange rate from a free API service.
+    Returns rate and timestamp, or None if failed.
+    """
+    if from_currency == to_currency:
+        return 1.0, datetime.datetime.now()
+
+    try:
+        # Using exchangerate-api.com (free tier allows 1500 requests/month)
+        url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
+        response = requests.get(url, timeout=5)
+
+        if response.status_code == 200:
+            data = response.json()
+            if to_currency in data['rates']:
+                rate = data['rates'][to_currency]
+                timestamp = datetime.datetime.now()
+                return rate, timestamp
+    except Exception as e:
+        st.warning(f"Could not fetch live exchange rate: {e}")
+
+    # Fallback to mock rates if API fails
+    mock_rates = {
+        ('USD', 'EUR'): 0.92,
+        ('EUR', 'USD'): 1.08,
+        ('USD', 'GBP'): 0.79,
+        ('GBP', 'USD'): 1.27,
+        ('EUR', 'GBP'): 0.85,
+        ('GBP', 'EUR'): 1.18,
+        ('USD', 'JPY'): 150.25,
+        ('JPY', 'USD'): 0.0067,
+        ('EUR', 'JPY'): 163.04,
+        ('JPY', 'EUR'): 0.0061
+    }
+
+    rate = mock_rates.get((from_currency, to_currency))
+    if rate:
+        return rate, datetime.datetime.now()
+
+    # If no rate found, try inverse
+    inverse_rate = mock_rates.get((to_currency, from_currency))
+    if inverse_rate:
+        return 1 / inverse_rate, datetime.datetime.now()
+
+    return None, None
+
+
+def needs_exchange_rate(payment_type, origin, settlement_ccy, instructed_ccy):
+    """
+    Determine if exchange rate is needed based on the payment scenario.
+    Returns True if FX conversion is required.
+    """
+    if settlement_ccy == instructed_ccy:
+        return False
+
+    # Based on the PDF logic
+    if payment_type == 'fedwire_intl':
+        return settlement_ccy != instructed_ccy
+    elif payment_type == 'swift':
+        return settlement_ccy != instructed_ccy
+
+    return False
+
+
+def calculate_settlement_amount(instructed_amount, settlement_ccy, instructed_ccy, exchange_rate=None):
+    """
+    Calculate settlement amount based on currencies and exchange rate.
+    """
+    if settlement_ccy == instructed_ccy:
+        return instructed_amount
+
+    if exchange_rate:
+        # Settlement amount = Instructed amount * exchange rate
+        return round(instructed_amount * exchange_rate, 2)
+
+    return instructed_amount
 
 
 # Function to validate USABA agent fields
@@ -246,8 +341,12 @@ if 'form_data' not in st.session_state:
             'cdtrCtry': 'GB',
             'cdtrAcctIBAN': 'GB33BUKB20201555555555',
             'instdAmt': 100.00,
+            'intrBkSttlmAmt': 100.00,
             'ustrdRmtInf': 'Invoice 67890',
-            'currency': 'USD'
+            'primaryCurrency': 'USD',
+            'secondaryCurrency': 'USD',
+            'exchangeRate': None,
+            'exchangeRateTimestamp': None
         }
     }
 if 'generated_xml' not in st.session_state:
@@ -418,6 +517,83 @@ else:  # pacs008
         st.markdown(
             '<div class="info-box">📋 <strong>Account Format Rule:</strong> SWIFT CBPR+ uses <strong>IBAN for IBAN countries</strong>, local account numbers for non-IBAN countries.</div>',
             unsafe_allow_html=True)
+
+    # Currency and Exchange Rate Section
+    st.markdown("### Currency & Exchange Rate Configuration")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.session_state.form_data['pacs008']['primaryCurrency'] = st.selectbox(
+            "Primary Currency (Settlement)",
+            ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
+            index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
+                st.session_state.form_data['pacs008'].get('primaryCurrency', 'USD')),
+            key="pacs008_primaryCurrency",
+            help="Currency used for interbank settlement (IntrBkSttlmAmt)"
+        )
+    with col2:
+        st.session_state.form_data['pacs008']['secondaryCurrency'] = st.selectbox(
+            "Secondary Currency (Instructed)",
+            ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
+            index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
+                st.session_state.form_data['pacs008'].get('secondaryCurrency', 'USD')),
+            key="pacs008_secondaryCurrency",
+            help="Currency for the final payment to beneficiary (InstdAmt)"
+        )
+
+    # Check if exchange rate is needed
+    primary_ccy = st.session_state.form_data['pacs008']['primaryCurrency']
+    secondary_ccy = st.session_state.form_data['pacs008']['secondaryCurrency']
+
+    payment_type = 'fedwire_intl' if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international' else 'swift' if pacs008_channel_type_lower == 'swift' else 'fedwire_dom'
+    fx_needed = needs_exchange_rate(payment_type, 'US', primary_ccy, secondary_ccy)
+
+    if fx_needed:
+        st.markdown(
+            f'<div class="fx-info-box">💱 <strong>FX Conversion Required:</strong> {primary_ccy} ➔ {secondary_ccy}<br>'
+            f'Settlement will be in {primary_ccy}, beneficiary receives {secondary_ccy}</div>',
+            unsafe_allow_html=True)
+
+        # Fetch exchange rate
+        if st.button("🔄 Fetch Current Exchange Rate", key="fetch_fx_rate"):
+            with st.spinner("Fetching exchange rate..."):
+                rate, timestamp = get_exchange_rate(primary_ccy, secondary_ccy)
+                if rate:
+                    st.session_state.form_data['pacs008']['exchangeRate'] = rate
+                    st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = timestamp
+                    st.success(f"Exchange rate updated: 1 {primary_ccy} = {rate:.6f} {secondary_ccy}")
+                else:
+                    st.error("Could not fetch exchange rate. Please enter manually.")
+
+        # Display current rate if available
+        current_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
+        if current_rate:
+            rate_timestamp = st.session_state.form_data['pacs008'].get('exchangeRateTimestamp')
+            timestamp_str = rate_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if rate_timestamp else 'Unknown'
+            st.markdown(
+                f'<div class="fx-rate-display">📊 Current Rate: 1 {primary_ccy} = {current_rate:.6f} {secondary_ccy}<br>'
+                f'<small>Last updated: {timestamp_str}</small></div>',
+                unsafe_allow_html=True)
+
+        # Manual rate input
+        manual_rate = st.number_input(
+            f"Exchange Rate ({primary_ccy} to {secondary_ccy})",
+            value=float(current_rate) if current_rate else 1.0,
+            min_value=0.000001,
+            step=0.000001,
+            format="%.6f",
+            key="pacs008_manual_exchange_rate",
+            help="Enter the exchange rate manually if needed"
+        )
+
+        if manual_rate != current_rate:
+            st.session_state.form_data['pacs008']['exchangeRate'] = manual_rate
+            st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = datetime.datetime.now()
+    else:
+        st.markdown(
+            f'<div class="fx-info-box">✅ <strong>No FX Conversion:</strong> Both settlement and instruction in {primary_ccy}</div>',
+            unsafe_allow_html=True)
+        st.session_state.form_data['pacs008']['exchangeRate'] = None
 
     if pacs008_channel_type_lower == 'fedwire':
         sttlm_mtd_options = ['CLRG']
@@ -663,12 +839,36 @@ else:  # pacs008
     st.markdown("### Transaction Details")
     col1, col2 = st.columns(2)
     with col1:
-        st.session_state.form_data['pacs008']['instdAmt'] = st.number_input("Instructed Amount (InstdAmt)", value=float(
-            st.session_state.form_data['pacs008']['instdAmt']), min_value=0.01, step=0.01, format="%.2f",
-                                                                            key="pacs008_instdAmt")
-        st.session_state.form_data['pacs008']['currency'] = st.text_input("Currency (e.g., USD, EUR)",
-                                                                          value=st.session_state.form_data['pacs008'][
-                                                                              'currency'], key="pacs008_currency")
+        # Instructed Amount (what beneficiary receives)
+        st.session_state.form_data['pacs008']['instdAmt'] = st.number_input(
+            f"Instructed Amount (InstdAmt) - {secondary_ccy}",
+            value=float(st.session_state.form_data['pacs008']['instdAmt']),
+            min_value=0.01,
+            step=0.01,
+            format="%.2f",
+            key="pacs008_instdAmt",
+            help=f"Amount the beneficiary will receive in {secondary_ccy}"
+        )
+
+        # Calculate settlement amount
+        current_exchange_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
+        settlement_amount = st.session_state.form_data['pacs008']['instdAmt']
+
+        if fx_needed and current_exchange_rate:
+            # For FX conversion: settlement amount = instructed amount / exchange rate
+            settlement_amount = round(st.session_state.form_data['pacs008']['instdAmt'] / current_exchange_rate, 2)
+
+        st.session_state.form_data['pacs008']['intrBkSttlmAmt'] = settlement_amount
+
+        # Display settlement amount (read-only)
+        st.number_input(
+            f"Settlement Amount (IntrBkSttlmAmt) - {primary_ccy}",
+            value=settlement_amount,
+            disabled=True,
+            format="%.2f",
+            help=f"Interbank settlement amount in {primary_ccy} (calculated automatically)"
+        )
+
     with col2:
         st.session_state.form_data['pacs008']['ustrdRmtInf'] = st.text_area("Unstructured Remittance Info",
                                                                             st.session_state.form_data['pacs008'][
