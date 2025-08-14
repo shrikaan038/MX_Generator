@@ -4,9 +4,140 @@ import datetime
 import uuid
 import random
 import requests
+import json
+import os
+from pathlib import Path
 from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
+
+# Global cache for exchange rates
+_rate_cache = {}
+_cache_file = "exchange_rate_cache.json"
+
+
+def load_cache_from_file():
+    """Load cached rates from file on startup"""
+    global _rate_cache
+    try:
+        if os.path.exists(_cache_file):
+            with open(_cache_file, 'r') as f:
+                data = json.load(f)
+                _rate_cache = data
+    except Exception as e:
+        print(f"Could not load cache file: {e}")
+        _rate_cache = {}
+
+
+def save_cache_to_file():
+    """Save current cache to file"""
+    try:
+        with open(_cache_file, 'w') as f:
+            json.dump(_rate_cache, f, indent=2, default=str)
+    except Exception as e:
+        print(f"Could not save cache file: {e}")
+
+
+def update_cache(base_currency, rates_data, timestamp):
+    """Update cache with successful API response"""
+    global _rate_cache
+
+    cache_entry = {
+        'rates': rates_data,
+        'timestamp': timestamp.isoformat(),
+        'base': base_currency
+    }
+
+    # Store the full rates data keyed by base currency
+    _rate_cache[base_currency] = cache_entry
+
+    # Save to file for persistence
+    save_cache_to_file()
+
+
+def get_cached_rate(from_currency, to_currency):
+    """Get rate from cache if available"""
+    # Try direct cache hit
+    if from_currency in _rate_cache:
+        cache_entry = _rate_cache[from_currency]
+        if to_currency in cache_entry['rates']:
+            cached_timestamp = datetime.datetime.fromisoformat(cache_entry['timestamp'])
+            return cache_entry['rates'][to_currency], cached_timestamp
+
+    # Try inverse calculation from cache
+    if to_currency in _rate_cache:
+        cache_entry = _rate_cache[to_currency]
+        if from_currency in cache_entry['rates']:
+            inverse_rate = 1 / cache_entry['rates'][from_currency]
+            cached_timestamp = datetime.datetime.fromisoformat(cache_entry['timestamp'])
+            return inverse_rate, cached_timestamp
+
+    return None, None
+
+
+def is_cache_fresh(timestamp, max_age_minutes=15):
+    """Check if cached data is still fresh"""
+    if not timestamp:
+        return False
+
+    age = datetime.datetime.now() - timestamp
+    return age.total_seconds() < (max_age_minutes * 60)
+
+
+def get_exchange_rate(from_currency, to_currency, use_cache=True, max_cache_age_minutes=15):
+    """
+    Fetch current exchange rate with intelligent caching.
+
+    Args:
+        from_currency: Source currency code
+        to_currency: Target currency code
+        use_cache: Whether to use cached data if API fails
+        max_cache_age_minutes: How long to consider cache fresh
+
+    Returns:
+        tuple: (rate, timestamp) or (None, None) if failed
+    """
+    if from_currency == to_currency:
+        return 1.0, datetime.datetime.now()
+
+    # Check if we have fresh cached data first
+    if use_cache:
+        cached_rate, cached_timestamp = get_cached_rate(from_currency, to_currency)
+        if cached_rate and is_cache_fresh(cached_timestamp, max_cache_age_minutes):
+            return cached_rate, cached_timestamp
+
+    # Try to fetch from API
+    try:
+        url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
+        response = requests.get(url, timeout=5)
+
+        if response.status_code == 200:
+            data = response.json()
+            if to_currency in data['rates']:
+                rate = data['rates'][to_currency]
+                timestamp = datetime.datetime.now()
+
+                # Update cache with successful response
+                update_cache(from_currency, data['rates'], timestamp)
+
+                return rate, timestamp
+
+    except Exception as e:
+        st.warning(f"API request failed: {e}")
+
+    # Fallback to cached data (even if stale) if API fails
+    if use_cache:
+        cached_rate, cached_timestamp = get_cached_rate(from_currency, to_currency)
+        if cached_rate:
+            st.info(f"Using cached rate from {cached_timestamp.strftime('%Y-%m-%d %H:%M:%S')} (API unavailable)")
+            return cached_rate, cached_timestamp
+
+    # No rate available
+    return None, None
+
+
+# Initialize cache on module load
+load_cache_from_file()
 
 # Custom CSS for styling
 st.markdown("""
@@ -81,6 +212,14 @@ st.markdown("""
         margin: 0.5rem 0;
         font-weight: 600;
     }
+    .cache-info {
+        background-color: #fef3c7;
+        border: 1px solid #f59e0b;
+        border-radius: 0.375rem;
+        padding: 0.5rem;
+        margin: 0.25rem 0;
+        font-size: 0.875rem;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -96,54 +235,6 @@ def get_current_datetime_with_offset():
     now = datetime.datetime.now(datetime.timezone.utc)
     # Format to YYYY-MM-DDTHH:MM:SS+00:00 for UTC, which is common for SWIFT CBPR+
     return now.strftime('%Y-%m-%dT%H:%M:%S+00:00')
-
-
-def get_exchange_rate(from_currency, to_currency):
-    """
-    Fetch current exchange rate from a free API service.
-    Returns rate and timestamp, or None if failed.
-    """
-    if from_currency == to_currency:
-        return 1.0, datetime.datetime.now()
-
-    try:
-        # Using exchangerate-api.com (free tier allows 1500 requests/month)
-        url = f"https://api.exchangerate-api.com/v4/latest/{from_currency}"
-        response = requests.get(url, timeout=5)
-
-        if response.status_code == 200:
-            data = response.json()
-            if to_currency in data['rates']:
-                rate = data['rates'][to_currency]
-                timestamp = datetime.datetime.now()
-                return rate, timestamp
-    except Exception as e:
-        st.warning(f"Could not fetch live exchange rate: {e}")
-
-    # Fallback to mock rates if API fails
-    mock_rates = {
-        ('USD', 'EUR'): 0.92,
-        ('EUR', 'USD'): 1.08,
-        ('USD', 'GBP'): 0.79,
-        ('GBP', 'USD'): 1.27,
-        ('EUR', 'GBP'): 0.85,
-        ('GBP', 'EUR'): 1.18,
-        ('USD', 'JPY'): 150.25,
-        ('JPY', 'USD'): 0.0067,
-        ('EUR', 'JPY'): 163.04,
-        ('JPY', 'EUR'): 0.0061
-    }
-
-    rate = mock_rates.get((from_currency, to_currency))
-    if rate:
-        return rate, datetime.datetime.now()
-
-    # If no rate found, try inverse
-    inverse_rate = mock_rates.get((to_currency, from_currency))
-    if inverse_rate:
-        return 1 / inverse_rate, datetime.datetime.now()
-
-    return None, None
 
 
 def needs_exchange_rate(payment_type, origin, settlement_ccy, instructed_ccy):
@@ -507,7 +598,7 @@ else:  # pacs008
     if pacs008_channel_type_lower == 'fedwire':
         if fedwire_type == 'domestic':
             st.markdown(
-                '<div class="info-box">📋 <strong>Account Format Rule:</strong> Fedwire Domestic (US ➔ US) uses <strong>account numbers</strong>, not IBANs. Bank identification via ABA routing numbers in Agent fields.</div>',
+                '<div class="info-box">📋 <strong>Account Format Rule:</strong> Fedwire Domestic (US ➜ US) uses <strong>account numbers</strong>, not IBANs. Bank identification via ABA routing numbers in Agent fields.</div>',
                 unsafe_allow_html=True)
         else:
             st.markdown(
@@ -550,9 +641,24 @@ else:  # pacs008
 
     if fx_needed:
         st.markdown(
-            f'<div class="fx-info-box">💱 <strong>FX Conversion Required:</strong> {primary_ccy} ➔ {secondary_ccy}<br>'
+            f'<div class="fx-info-box">💱 <strong>FX Conversion Required:</strong> {primary_ccy} ➜ {secondary_ccy}<br>'
             f'Settlement will be in {primary_ccy}, beneficiary receives {secondary_ccy}</div>',
             unsafe_allow_html=True)
+
+        # Check for cached rates first
+        cached_rate, cached_timestamp = get_cached_rate(primary_ccy, secondary_ccy)
+        if cached_rate and is_cache_fresh(cached_timestamp, 15):
+            st.markdown(
+                f'<div class="cache-info">📊 Fresh cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
+                f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")}</small></div>',
+                unsafe_allow_html=True)
+            st.session_state.form_data['pacs008']['exchangeRate'] = cached_rate
+            st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = cached_timestamp
+        elif cached_rate:
+            st.markdown(
+                f'<div class="cache-info">⚠️ Stale cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
+                f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")} (Consider refreshing)</small></div>',
+                unsafe_allow_html=True)
 
         # Fetch exchange rate
         if st.button("🔄 Fetch Current Exchange Rate", key="fetch_fx_rate"):
@@ -888,6 +994,7 @@ if st.button("Generate XML", key="generate_xml_button"):
         st.markdown("### ⚠️ Validation Errors")
         for error in validation_errors:
             st.markdown(f'<div class="error-message">{error}</div>', unsafe_allow_html=True)
+
     else:
         # Generate XML if no validation errors
         if st.session_state.message_type == 'pain001':
