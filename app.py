@@ -1,4 +1,4 @@
-# app.py
+# app_working.py
 import streamlit as st
 import datetime
 import uuid
@@ -7,7 +7,7 @@ import requests
 import json
 import os
 from pathlib import Path
-from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
+from xml_generator2 import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
 
@@ -437,7 +437,10 @@ if 'form_data' not in st.session_state:
             'primaryCurrency': 'USD',
             'secondaryCurrency': 'USD',
             'exchangeRate': None,
-            'exchangeRateTimestamp': None
+            'exchangeRateTimestamp': None,
+            'initgPtyNm': '',
+            'ultmtDbtrNm': '',
+            'ultmtCdtrNm': ''
         }
     }
 if 'generated_xml' not in st.session_state:
@@ -892,55 +895,75 @@ else:  # pacs008
             help=cdtr_acct_help
         )
 
+
+    st.markdown("### Optional Parties")
+    st.session_state.form_data['pacs008']['initgPtyNm'] = st.text_input(
+        "Initiating Party Name (InitgPty.Nm)",
+        value=st.session_state.form_data['pacs008']['initgPtyNm'],
+        key="pacs008_initgPtyNm",
+        help="Optional. Will be included in XML if provided."
+    )
+    st.session_state.form_data['pacs008']['ultmtDbtrNm'] = st.text_input(
+        "Ultimate Debtor Name (UltmtDbtr.Nm)",
+        value=st.session_state.form_data['pacs008']['ultmtDbtrNm'],
+        key="pacs008_ultmtDbtrNm",
+        help="Optional. Will be included in XML if provided."
+    )
+    st.session_state.form_data['pacs008']['ultmtCdtrNm'] = st.text_input(
+        "Ultimate Creditor Name (UltmtCdtr.Nm)",
+        value=st.session_state.form_data['pacs008']['ultmtCdtrNm'],
+        key="pacs008_ultmtCdtrNm",
+        help="Optional. Will be included in XML if provided."
+    )
         # Dynamic input fields for Creditor Agent
-        st.markdown("#### Creditor Agent")
-        if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'domestic':
-            st.session_state.form_data['pacs008']['cdtrAgtMmbId'] = st.text_input("USABA Member ID *", value=
-            st.session_state.form_data['pacs008']['cdtrAgtMmbId'], key="pacs008_cdtrAgtMmbId",
-                                                                                  help="When USABA Member ID is provided, Name and Address fields become mandatory")
-        elif pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international':
-            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
-            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
-        else:  # SWIFT
-            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
-            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
+    st.markdown("#### Creditor Agent")
+    if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'domestic':
+        st.session_state.form_data['pacs008']['cdtrAgtMmbId'] = st.text_input("USABA Member ID *", value=
+        st.session_state.form_data['pacs008']['cdtrAgtMmbId'], key="pacs008_cdtrAgtMmbId",
+                                                                              help="When USABA Member ID is provided, Name and Address fields become mandatory")
+    elif pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international':
+        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
+        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
+    else:  # SWIFT
+        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
+        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
 
-        # Check if USABA fields should be mandatory for creditor agent
-        cdtr_usaba_mandatory = (pacs008_channel_type_lower == 'fedwire' and
-                                fedwire_type == 'domestic' and
-                                st.session_state.form_data['pacs008'].get('cdtrAgtMmbId', '').strip())
+    # Check if USABA fields should be mandatory for creditor agent
+    cdtr_usaba_mandatory = (pacs008_channel_type_lower == 'fedwire' and
+                            fedwire_type == 'domestic' and
+                            st.session_state.form_data['pacs008'].get('cdtrAgtMmbId', '').strip())
 
-        cdtr_name_help = "* Mandatory when USABA Member ID is provided" if cdtr_usaba_mandatory else ""
+    cdtr_name_help = "* Mandatory when USABA Member ID is provided" if cdtr_usaba_mandatory else ""
 
-        st.session_state.form_data['pacs008']['cdtrAgtNm'] = st.text_input(
-            f"Name {'*' if cdtr_usaba_mandatory else ''}",
-            value=st.session_state.form_data['pacs008']['cdtrAgtNm'],
-            key="pacs008_cdtrAgtNm",
-            help=cdtr_name_help
-        )
-        st.session_state.form_data['pacs008']['cdtrAgtStrtNm'] = st.text_input(
-            f"Street Name {'*' if cdtr_usaba_mandatory else ''}",
-            value=st.session_state.form_data['pacs008']['cdtrAgtStrtNm'],
-            key="pacs008_cdtrAgtStrtNm",
-            help=cdtr_name_help
-        )
-        st.session_state.form_data['pacs008']['cdtrAgtBldgNb'] = st.text_input("Building Number", value=
-        st.session_state.form_data['pacs008']['cdtrAgtBldgNb'], key="pacs008_cdtrAgtBldgNb")
-        st.session_state.form_data['pacs008']['cdtrAgtPstCd'] = st.text_input("Post Code", value=
-        st.session_state.form_data['pacs008']['cdtrAgtPstCd'], key="pacs008_cdtrAgtPstCd")
-        st.session_state.form_data['pacs008']['cdtrAgtTwnNm'] = st.text_input(
-            f"Town Name {'*' if cdtr_usaba_mandatory else ''}",
-            value=st.session_state.form_data['pacs008']['cdtrAgtTwnNm'],
-            key="pacs008_cdtrAgtTwnNm",
-            help=cdtr_name_help
-        )
-        st.session_state.form_data['pacs008']['cdtrAgtCtry'] = st.text_input(
-            f"Country {'*' if cdtr_usaba_mandatory else ''}",
-            value=st.session_state.form_data['pacs008']['cdtrAgtCtry'],
-            key="pacs008_cdtrAgtCtry",
-            help=f"{cdtr_name_help} Use 2-letter ISO country codes (e.g., US, GB, DE)",
-            max_chars=2
-        )
+    st.session_state.form_data['pacs008']['cdtrAgtNm'] = st.text_input(
+        f"Name {'*' if cdtr_usaba_mandatory else ''}",
+        value=st.session_state.form_data['pacs008']['cdtrAgtNm'],
+        key="pacs008_cdtrAgtNm",
+        help=cdtr_name_help
+    )
+    st.session_state.form_data['pacs008']['cdtrAgtStrtNm'] = st.text_input(
+        f"Street Name {'*' if cdtr_usaba_mandatory else ''}",
+        value=st.session_state.form_data['pacs008']['cdtrAgtStrtNm'],
+        key="pacs008_cdtrAgtStrtNm",
+        help=cdtr_name_help
+    )
+    st.session_state.form_data['pacs008']['cdtrAgtBldgNb'] = st.text_input("Building Number", value=
+    st.session_state.form_data['pacs008']['cdtrAgtBldgNb'], key="pacs008_cdtrAgtBldgNb")
+    st.session_state.form_data['pacs008']['cdtrAgtPstCd'] = st.text_input("Post Code", value=
+    st.session_state.form_data['pacs008']['cdtrAgtPstCd'], key="pacs008_cdtrAgtPstCd")
+    st.session_state.form_data['pacs008']['cdtrAgtTwnNm'] = st.text_input(
+        f"Town Name {'*' if cdtr_usaba_mandatory else ''}",
+        value=st.session_state.form_data['pacs008']['cdtrAgtTwnNm'],
+        key="pacs008_cdtrAgtTwnNm",
+        help=cdtr_name_help
+    )
+    st.session_state.form_data['pacs008']['cdtrAgtCtry'] = st.text_input(
+        f"Country {'*' if cdtr_usaba_mandatory else ''}",
+        value=st.session_state.form_data['pacs008']['cdtrAgtCtry'],
+        key="pacs008_cdtrAgtCtry",
+        help=f"{cdtr_name_help} Use 2-letter ISO country codes (e.g., US, GB, DE)",
+        max_chars=2
+    )
 
     st.markdown("### Transaction Details")
     col1, col2 = st.columns(2)

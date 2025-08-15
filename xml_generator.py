@@ -1,4 +1,4 @@
-# xml_generator.py
+# xml_generator_working.py
 import datetime
 import uuid
 import re
@@ -31,6 +31,8 @@ def generate_pain001_xml(data):
             <InitgPty>
                 <Nm>{data.get('initgPtyNm', '')}</Nm>
             </InitgPty>
+        
+            {f"<InitgPty><Nm>{data.get('initgPtyNm')}</Nm></InitgPty>" if data.get('initgPtyNm') else ""}
         </GrpHdr>
         <PmtInf>
             <PmtInfId>{data.get('pmtInfId', '')}</PmtInfId>
@@ -59,6 +61,8 @@ def generate_pain001_xml(data):
                     <IBAN>{data.get('dbtrAcctIBAN', '')}</IBAN>
                 </Id>
             </DbtrAcct>
+            {f"<UltmtDbtr><Nm>{data.get('ultmtDbtrNm')}</Nm></UltmtDbtr>" if data.get('ultmtDbtrNm') else ""}
+
             <DbtrAgt>
                 <FinInstnId>
                     <BICFI>{data.get('dbtrAgtBICFI', '')}</BICFI>
@@ -79,6 +83,8 @@ def generate_pain001_xml(data):
                     <Ctry>{data.get('cdtrCtry', '')}</Ctry>
                 </PstlAdr>
             </Cdtr>
+
+            {f"<UltmtCdtr><Nm>{data.get('ultmtCdtrNm')}</Nm></UltmtCdtr>" if data.get('ultmtCdtrNm') else ""}
             <CdtrAcct>
                 <Id>
                     <IBAN>{data.get('cdtrAcctIBAN', '')}</IBAN>
@@ -108,6 +114,7 @@ def generate_pain001_xml(data):
                         <IBAN>{data.get('dbtrAcctIBAN', '')}</IBAN>
                     </Id>
                 </DbtrAcct>
+            {f"<UltmtDbtr><Nm>{data.get('ultmtDbtrNm')}</Nm></UltmtDbtr>" if data.get('ultmtDbtrNm') else ""}
                 <DbtrAgt>
                     <FinInstnId>
                         <BICFI>{data.get('dbtrAgtBICFI', '')}</BICFI>
@@ -121,7 +128,9 @@ def generate_pain001_xml(data):
                 <Cdtr>
                     <Nm>{data.get('cdtrNm', '')}</Nm>
                 </Cdtr>
-                <CdtrAcct>
+    
+            {f"<UltmtCdtr><Nm>{data.get('ultmtCdtrNm')}</Nm></UltmtCdtr>" if data.get('ultmtCdtrNm') else ""}
+            <CdtrAcct>
                     <Id>
                         <IBAN>{data.get('cdtrAcctIBAN', '')}</IBAN>
                     </Id>
@@ -253,8 +262,13 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
     cre_dt_tm_formatted = ""
 
     # Get currency information
-    primary_ccy = data.get('primaryCurrency', 'USD')
-    secondary_ccy = data.get('secondaryCurrency', 'USD')
+    if channel_type == 'fedwire' and fedwire_type == 'domestic':
+        primary_ccy = 'USD'
+        secondary_ccy = 'USD'
+    else:
+        primary_ccy = data.get('primaryCurrency', 'USD')
+        secondary_ccy = data.get('secondaryCurrency', 'USD')
+
     exchange_rate = data.get('exchangeRate')
 
     # Get amounts
@@ -404,7 +418,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             <SttlmInf>
                 <SttlmMtd>{data.get('sttlmMtd', '')}</SttlmMtd>
                 {f"<ClrSys><Cd>{'FDW' if channel_type == 'fedwire' else 'UNKN'}</Cd></ClrSys>" if channel_type == 'fedwire' else ""}
-            </SttlmInf>
+            </SttlmInf>            
         </GrpHdr>
         <CdtTrfTxInf>
             <PmtId>
@@ -429,6 +443,9 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             <InstdAgt>
                 {get_inst_agent_xml('InstdAgt', channel_type, data)}
             </InstdAgt>
+            {f"<UltmtDbtr><Nm>{data.get('ultmtDbtrNm')}</Nm></UltmtDbtr>" if data.get('ultmtDbtrNm') and not (
+                channel_type == 'fedwire')else ""}
+            {f"<InitgPty><Nm>{data.get('initgPtyNm')}</Nm></InitgPty>" if data.get('initgPtyNm') else ""}
             <Dbtr>
                 <Nm>{data.get('dbtrNm', '')}</Nm>
                 <PstlAdr>
@@ -457,10 +474,11 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                     <TwnNm>{data.get('cdtrTwnNm', '')}</TwnNm>
                     <Ctry>{data.get('cdtrCtry', '')}</Ctry>
                 </PstlAdr>
-            </Cdtr>
+            </Cdtr>            
             <CdtrAcct>
                 {cdtr_acct_xml}
             </CdtrAcct>
+            {f"<UltmtCdtr><Nm>{data.get('ultmtCdtrNm')}</Nm></UltmtCdtr>" if data.get('ultmtCdtrNm') else ""}
             <RmtInf>
                 <Ustrd>{data.get('ustrdRmtInf', '')}</Ustrd>
             </RmtInf>
