@@ -7,7 +7,7 @@ import requests
 import json
 import os
 from pathlib import Path
-from xml_generator2 import generate_pain001_xml, generate_pacs008_xml, is_iban_country
+from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
 
@@ -1003,6 +1003,13 @@ else:  # pacs008
                                                                             st.session_state.form_data['pacs008'][
                                                                                 'ustrdRmtInf'],
                                                                             key="pacs008_ustrdRmtInf")
+
+        st.session_state.form_data['pacs008']['chrgBr'] = st.selectbox(
+            "Charge Bearer",
+            options=["SHAR", "DEBT", "CRED"],
+            index=0,  # Default to SHAR if you want
+            key="pacs008_chrgBr"
+        )
 
 if st.button("Generate XML", key="generate_xml_button"):
     # Validate USABA fields if pacs008 and Fedwire

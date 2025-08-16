@@ -436,7 +436,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             <IntrBkSttlmDt>{data.get('intrBkSttlmDt', '')}</IntrBkSttlmDt>
             <InstdAmt Ccy="{secondary_ccy}">{instructed_amount:.2f}</InstdAmt>
             {exchange_rate_xml}
-            <ChrgBr>SHAR</ChrgBr>
+            <ChrgBr>{data.get('chrgBr', 'SHAR')}</ChrgBr>
             <InstgAgt>
                 {get_inst_agent_xml('InstgAgt', channel_type, data)}
             </InstgAgt>
