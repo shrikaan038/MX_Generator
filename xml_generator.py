@@ -262,7 +262,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
     cre_dt_tm_formatted = ""
 
     # Get currency information
-    if channel_type == 'fedwire' and fedwire_type == 'domestic':
+    if channel_type == 'fedwire' and fedwire_type != 'international':
         primary_ccy = 'USD'
         secondary_ccy = 'USD'
     else:
@@ -319,6 +319,14 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             pst_cd = data.get('dbtrAgtPstCd', '')
             twn_nm = data.get('dbtrAgtTwnNm', '')
             ctry = data.get('dbtrAgtCtry', '')
+        elif agent_type == 'CdtrAgt' and fedwire_type == "tax":
+            mmb_id = "091036164"
+            name = "Internal Revenue Service"
+            street = "West Pershing Road"
+            bldg_nb = "333"
+            pst_cd = "64108"
+            twn_nm = "Kansas City"
+            ctry = "US"
         else:  # CdtrAgt
             bicfi = data.get('cdtrAgtBICFI_tx', '')
             mmb_id = data.get('cdtrAgtMmbId', '')
@@ -334,7 +342,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             return f"<FinInstnId><BICFI>{bicfi}</BICFI></FinInstnId>"
 
         if channel_type == 'fedwire':
-            if fedwire_type == 'domestic' and mmb_id:
+            if fedwire_type != 'international' and mmb_id:
                 return (f"""<FinInstnId>
                     <ClrSysMmbId>
                         <ClrSysId>
@@ -404,6 +412,40 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
 
     # Generate exchange rate XML if needed
     exchange_rate_xml = get_exchange_rate_xml(exchange_rate, primary_ccy, secondary_ccy)
+
+    tax_xml = ""
+
+    # Fedwire Domestic Tax Payment special case
+    if channel_type == "fedwire" and fedwire_type == "tax":
+        charge_bearer = "DEBT"
+        tax_year = data.get("taxYear")
+        tax_year_with_date = f"{tax_year}-12-31"
+
+        tax_xml = f"""
+                <RmtInf>
+                    <Strd>
+                        <TaxRmt>
+                            <Cdtr>
+                                <TaxId>{data.get('taxId')}</TaxId>
+                            </Cdtr>
+                            <Rcrd>
+                                <Tp>{data.get('taxType')}</Tp>
+                                <Prd>
+                                    <Yr>{tax_year_with_date}</Yr>
+                                    <Tp>{data.get('taxPeriod')}</Tp>
+                                </Prd>
+                                {f"<AddtlInf>{data.get('taxInfo')}</AddtlInf>" if data.get('taxInfo') else ""}
+                            </Rcrd>
+                        </TaxRmt>
+                    </Strd>
+                </RmtInf>
+            """
+    else:
+        tax_xml = f"""
+                <RmtInf>
+                    <Ustrd>{data.get('ustrdRmtInf', '')}</Ustrd>
+                </RmtInf>
+            """
 
     # Generate the XML content
     xml_content = f"""{app_hdr}
@@ -479,9 +521,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                 {cdtr_acct_xml}
             </CdtrAcct>
             {f"<UltmtCdtr><Nm>{data.get('ultmtCdtrNm')}</Nm></UltmtCdtr>" if data.get('ultmtCdtrNm') else ""}
-            <RmtInf>
-                <Ustrd>{data.get('ustrdRmtInf', '')}</Ustrd>
-            </RmtInf>
+            {tax_xml}
         </CdtTrfTxInf>
     </FIToFICstmrCdtTrf>
 </Document>

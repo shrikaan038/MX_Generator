@@ -7,7 +7,7 @@ import requests
 import json
 import os
 from pathlib import Path
-from xml_generator import generate_pain001_xml, generate_pacs008_xml, is_iban_country
+from xml_generator2 import generate_pain001_xml, generate_pacs008_xml, is_iban_country
 
 st.set_page_config(layout="wide", page_title="ISO 20022 XML Payment Generator")
 
@@ -197,6 +197,13 @@ st.markdown("""
         padding: 1rem;
         margin: 1rem 0;
     }
+    .tax-info-box {
+        background-color: #f0fdf4;
+        border: 1px solid #86efac;
+        border-radius: 0.375rem;
+        padding: 1rem;
+        margin: 1rem 0;
+    }
     .fx-info-box {
         background-color: #f0f9ff;
         border: 1px solid #7dd3fc;
@@ -316,13 +323,55 @@ def validate_usaba_fields(data, channel_type, fedwire_type):
     return errors
 
 
+def validate_tax_fields(data):
+    """
+    Validates mandatory tax payment fields.
+    Returns list of error messages.
+    """
+    errors = []
+
+    # Tax ID validation
+    tax_id = data.get('taxId', '').strip()
+    if not tax_id:
+        errors.append("Tax ID (TIN/EIN) is mandatory for tax payments")
+    elif len(tax_id) != 9 or not tax_id.isdigit():
+        errors.append("Tax ID must be exactly 9 numeric characters")
+    elif tax_id in ['000000000', '999999999']:
+        errors.append("Tax ID cannot be '000000000' or '999999999'")
+
+    # Tax Type validation
+    tax_type = data.get('taxType', '').strip()
+    if not tax_type:
+        errors.append("Tax Type Code is mandatory for tax payments")
+    elif len(tax_type) != 5:
+        errors.append("Tax Type Code must be exactly 5 characters")
+
+    # Tax Year validation
+    tax_year = data.get('taxYear', '').strip()
+    if not tax_year:
+        errors.append("Tax Year is mandatory for tax payments")
+    elif len(tax_year) != 4 or not tax_year.isdigit():
+        errors.append("Tax Year must be exactly 4 numeric characters (YYYY)")
+
+    # Tax Period validation
+    tax_period = data.get('taxPeriod', '').strip()
+    valid_periods = ['MM01', 'MM02', 'MM03', 'MM04', 'MM05', 'MM06',
+                     'MM07', 'MM08', 'MM09', 'MM10', 'MM11', 'MM12']
+    if not tax_period:
+        errors.append("Tax Period is mandatory for tax payments")
+    elif tax_period not in valid_periods:
+        errors.append("Tax Period must be one of MM01-MM12 (e.g., MM08 for August)")
+
+    return errors
+
+
 def get_account_field_help(channel_type, fedwire_type, country_code, sender_country='US'):
     """
     Generate help text for account fields based on the payment scheme rules.
     """
     if channel_type == 'fedwire':
-        if fedwire_type == 'domestic':
-            return "Enter US account number (IBAN not used for Fedwire domestic)"
+        if fedwire_type in ['domestic', 'tax']:
+            return "Enter US account number (IBAN not used for Fedwire domestic/tax)"
         elif fedwire_type == 'international':
             if is_iban_country(country_code):
                 return "Enter IBAN (required for IBAN countries in Fedwire international)"
@@ -344,7 +393,7 @@ def get_account_field_label(channel_type, fedwire_type, country_code, account_ty
     base_label = f"{account_type} Account"
 
     if channel_type == 'fedwire':
-        if fedwire_type == 'domestic':
+        if fedwire_type in ['domestic', 'tax']:
             return f"{base_label} Number"
         elif fedwire_type == 'international':
             if is_iban_country(country_code):
@@ -440,7 +489,12 @@ if 'form_data' not in st.session_state:
             'exchangeRateTimestamp': None,
             'initgPtyNm': '',
             'ultmtDbtrNm': '',
-            'ultmtCdtrNm': ''
+            'ultmtCdtrNm': '',
+            # Tax payment specific fields
+            'taxId': '',
+            'taxType': '',
+            'taxYear': '',
+            'taxPeriod': ''
         }
     }
 if 'generated_xml' not in st.session_state:
@@ -590,10 +644,13 @@ else:  # pacs008
     if pacs008_channel_type_lower == 'fedwire':
         fedwire_type = st.radio(
             "Select Fedwire Payment Type:",
-            ('Domestic', 'International'),
+            ('Domestic', 'International', 'US Tax Payment'),
             key="fedwire_type_selector",
             horizontal=True
-        ).lower()
+        ).lower().replace(' ', '_').replace('us_', '')
+        # Convert 'tax_payment' to 'tax' for consistency
+        if fedwire_type == 'tax_payment':
+            fedwire_type = 'tax'
     else:
         fedwire_type = None
 
@@ -602,6 +659,10 @@ else:  # pacs008
         if fedwire_type == 'domestic':
             st.markdown(
                 '<div class="info-box">📋 <strong>Account Format Rule:</strong> Fedwire Domestic (US ➜ US) uses <strong>account numbers</strong>, not IBANs. Bank identification via ABA routing numbers in Agent fields.</div>',
+                unsafe_allow_html=True)
+        elif fedwire_type == 'tax':
+            st.markdown(
+                '<div class="tax-info-box">🏛️ <strong>US Tax Payment:</strong> Uses account numbers (not IBANs). Creditor Agent is fixed as US Treasury (091036164). Charge Bearer is always DEBT. Structured tax remittance information required.</div>',
                 unsafe_allow_html=True)
         else:
             st.markdown(
@@ -612,96 +673,102 @@ else:  # pacs008
             '<div class="info-box">📋 <strong>Account Format Rule:</strong> SWIFT CBPR+ uses <strong>IBAN for IBAN countries</strong>, local account numbers for non-IBAN countries.</div>',
             unsafe_allow_html=True)
 
-    # Currency and Exchange Rate Section
-    st.markdown("### Currency & Exchange Rate Configuration")
+    # Currency and Exchange Rate Section (skip for tax payments)
+    if fedwire_type != 'tax':
+        st.markdown("### Currency & Exchange Rate Configuration")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.session_state.form_data['pacs008']['primaryCurrency'] = st.selectbox(
-            "Primary Currency (Settlement)",
-            ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
-            index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
-                st.session_state.form_data['pacs008'].get('primaryCurrency', 'USD')),
-            key="pacs008_primaryCurrency",
-            help="Currency used for interbank settlement (IntrBkSttlmAmt)"
-        )
-    with col2:
-        st.session_state.form_data['pacs008']['secondaryCurrency'] = st.selectbox(
-            "Secondary Currency (Instructed)",
-            ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
-            index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
-                st.session_state.form_data['pacs008'].get('secondaryCurrency', 'USD')),
-            key="pacs008_secondaryCurrency",
-            help="Currency for the final payment to beneficiary (InstdAmt)"
-        )
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.form_data['pacs008']['primaryCurrency'] = st.selectbox(
+                "Primary Currency (Settlement)",
+                ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
+                index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
+                    st.session_state.form_data['pacs008'].get('primaryCurrency', 'USD')),
+                key="pacs008_primaryCurrency",
+                help="Currency used for interbank settlement (IntrBkSttlmAmt)"
+            )
+        with col2:
+            st.session_state.form_data['pacs008']['secondaryCurrency'] = st.selectbox(
+                "Secondary Currency (Instructed)",
+                ['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'],
+                index=['USD', 'EUR', 'GBP', 'JPY', 'CAD', 'AUD', 'CHF'].index(
+                    st.session_state.form_data['pacs008'].get('secondaryCurrency', 'USD')),
+                key="pacs008_secondaryCurrency",
+                help="Currency for the final payment to beneficiary (InstdAmt)"
+            )
 
-    # Check if exchange rate is needed
-    primary_ccy = st.session_state.form_data['pacs008']['primaryCurrency']
-    secondary_ccy = st.session_state.form_data['pacs008']['secondaryCurrency']
+        # Check if exchange rate is needed
+        primary_ccy = st.session_state.form_data['pacs008']['primaryCurrency']
+        secondary_ccy = st.session_state.form_data['pacs008']['secondaryCurrency']
 
-    payment_type = 'fedwire_intl' if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international' else 'swift' if pacs008_channel_type_lower == 'swift' else 'fedwire_dom'
-    fx_needed = needs_exchange_rate(payment_type, 'US', primary_ccy, secondary_ccy)
+        payment_type = 'fedwire_intl' if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international' else 'swift' if pacs008_channel_type_lower == 'swift' else 'fedwire_dom'
+        fx_needed = needs_exchange_rate(payment_type, 'US', primary_ccy, secondary_ccy)
 
-    if fx_needed:
-        st.markdown(
-            f'<div class="fx-info-box">💱 <strong>FX Conversion Required:</strong> {primary_ccy} ➜ {secondary_ccy}<br>'
-            f'Settlement will be in {primary_ccy}, beneficiary receives {secondary_ccy}</div>',
-            unsafe_allow_html=True)
-
-        # Check for cached rates first
-        cached_rate, cached_timestamp = get_cached_rate(primary_ccy, secondary_ccy)
-        if cached_rate and is_cache_fresh(cached_timestamp, 15):
+        if fx_needed:
             st.markdown(
-                f'<div class="cache-info">📊 Fresh cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
-                f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")}</small></div>',
-                unsafe_allow_html=True)
-            st.session_state.form_data['pacs008']['exchangeRate'] = cached_rate
-            st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = cached_timestamp
-        elif cached_rate:
-            st.markdown(
-                f'<div class="cache-info">⚠️ Stale cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
-                f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")} (Consider refreshing)</small></div>',
+                f'<div class="fx-info-box">💱 <strong>FX Conversion Required:</strong> {primary_ccy} ➜ {secondary_ccy}<br>'
+                f'Settlement will be in {primary_ccy}, beneficiary receives {secondary_ccy}</div>',
                 unsafe_allow_html=True)
 
-        # Fetch exchange rate
-        if st.button("🔄 Fetch Current Exchange Rate", key="fetch_fx_rate"):
-            with st.spinner("Fetching exchange rate..."):
-                rate, timestamp = get_exchange_rate(primary_ccy, secondary_ccy)
-                if rate:
-                    st.session_state.form_data['pacs008']['exchangeRate'] = rate
-                    st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = timestamp
-                    st.success(f"Exchange rate updated: 1 {primary_ccy} = {rate:.6f} {secondary_ccy}")
-                else:
-                    st.error("Could not fetch exchange rate. Please enter manually.")
+            # Check for cached rates first
+            cached_rate, cached_timestamp = get_cached_rate(primary_ccy, secondary_ccy)
+            if cached_rate and is_cache_fresh(cached_timestamp, 15):
+                st.markdown(
+                    f'<div class="cache-info">📊 Fresh cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
+                    f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")}</small></div>',
+                    unsafe_allow_html=True)
+                st.session_state.form_data['pacs008']['exchangeRate'] = cached_rate
+                st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = cached_timestamp
+            elif cached_rate:
+                st.markdown(
+                    f'<div class="cache-info">⚠️ Stale cached rate available: 1 {primary_ccy} = {cached_rate:.6f} {secondary_ccy}<br>'
+                    f'<small>Cached: {cached_timestamp.strftime("%Y-%m-%d %H:%M:%S")} (Consider refreshing)</small></div>',
+                    unsafe_allow_html=True)
 
-        # Display current rate if available
-        current_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
-        if current_rate:
-            rate_timestamp = st.session_state.form_data['pacs008'].get('exchangeRateTimestamp')
-            timestamp_str = rate_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if rate_timestamp else 'Unknown'
+            # Fetch exchange rate
+            if st.button("🔄 Fetch Current Exchange Rate", key="fetch_fx_rate"):
+                with st.spinner("Fetching exchange rate..."):
+                    rate, timestamp = get_exchange_rate(primary_ccy, secondary_ccy)
+                    if rate:
+                        st.session_state.form_data['pacs008']['exchangeRate'] = rate
+                        st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = timestamp
+                        st.success(f"Exchange rate updated: 1 {primary_ccy} = {rate:.6f} {secondary_ccy}")
+                    else:
+                        st.error("Could not fetch exchange rate. Please enter manually.")
+
+            # Display current rate if available
+            current_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
+            if current_rate:
+                rate_timestamp = st.session_state.form_data['pacs008'].get('exchangeRateTimestamp')
+                timestamp_str = rate_timestamp.strftime('%Y-%m-%d %H:%M:%S UTC') if rate_timestamp else 'Unknown'
+                st.markdown(
+                    f'<div class="fx-rate-display">📊 Current Rate: 1 {primary_ccy} = {current_rate:.6f} {secondary_ccy}<br>'
+                    f'<small>Last updated: {timestamp_str}</small></div>',
+                    unsafe_allow_html=True)
+
+            # Manual rate input
+            manual_rate = st.number_input(
+                f"Exchange Rate ({primary_ccy} to {secondary_ccy})",
+                value=float(current_rate) if current_rate else 1.0,
+                min_value=0.000001,
+                step=0.000001,
+                format="%.6f",
+                key="pacs008_manual_exchange_rate",
+                help="Enter the exchange rate manually if needed"
+            )
+
+            if manual_rate != current_rate:
+                st.session_state.form_data['pacs008']['exchangeRate'] = manual_rate
+                st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = datetime.datetime.now()
+        else:
             st.markdown(
-                f'<div class="fx-rate-display">📊 Current Rate: 1 {primary_ccy} = {current_rate:.6f} {secondary_ccy}<br>'
-                f'<small>Last updated: {timestamp_str}</small></div>',
+                f'<div class="fx-info-box">✅ <strong>No FX Conversion:</strong> Both settlement and instruction in {primary_ccy}</div>',
                 unsafe_allow_html=True)
-
-        # Manual rate input
-        manual_rate = st.number_input(
-            f"Exchange Rate ({primary_ccy} to {secondary_ccy})",
-            value=float(current_rate) if current_rate else 1.0,
-            min_value=0.000001,
-            step=0.000001,
-            format="%.6f",
-            key="pacs008_manual_exchange_rate",
-            help="Enter the exchange rate manually if needed"
-        )
-
-        if manual_rate != current_rate:
-            st.session_state.form_data['pacs008']['exchangeRate'] = manual_rate
-            st.session_state.form_data['pacs008']['exchangeRateTimestamp'] = datetime.datetime.now()
+            st.session_state.form_data['pacs008']['exchangeRate'] = None
     else:
-        st.markdown(
-            f'<div class="fx-info-box">✅ <strong>No FX Conversion:</strong> Both settlement and instruction in {primary_ccy}</div>',
-            unsafe_allow_html=True)
+        # Tax payments are always USD
+        st.session_state.form_data['pacs008']['primaryCurrency'] = 'USD'
+        st.session_state.form_data['pacs008']['secondaryCurrency'] = 'USD'
         st.session_state.form_data['pacs008']['exchangeRate'] = None
 
     if pacs008_channel_type_lower == 'fedwire':
@@ -753,6 +820,10 @@ else:  # pacs008
             st.session_state.form_data['pacs008']['instgAgtBICFI'] = st.text_input("Instructing Agent BICFI", value=
             st.session_state.form_data['pacs008']['instgAgtBICFI'], key="pacs008_instgAgtBICFI")
         else:  # Fedwire
+            if fedwire_type == 'tax':
+                # For tax payments, instructed agent is always US Treasury
+                st.info("Instructed Agent for tax payments is automatically set to US Treasury (091036164)")
+                st.session_state.form_data['pacs008']['instdAgtMmbId'] = '091036164'
             st.session_state.form_data['pacs008']['instgAgtMmbId'] = st.text_input("Instructing Agent USABA (MmbId)",
                                                                                    value=st.session_state.form_data[
                                                                                        'pacs008']['instgAgtMmbId'],
@@ -761,7 +832,7 @@ else:  # pacs008
         if pacs008_channel_type_lower == 'swift':
             st.session_state.form_data['pacs008']['instdAgtBICFI'] = st.text_input("Instructed Agent BICFI", value=
             st.session_state.form_data['pacs008']['instdAgtBICFI'], key="pacs008_instdAgtBICFI")
-        else:  # Fedwire
+        elif fedwire_type != 'tax':  # Fedwire but not tax
             st.session_state.form_data['pacs008']['instdAgtMmbId'] = st.text_input("Instructed Agent USABA (MmbId)",
                                                                                    value=st.session_state.form_data[
                                                                                        'pacs008']['instdAgtMmbId'],
@@ -774,6 +845,72 @@ else:  # pacs008
         help="Max 16 characters for SWIFT pacs.008",
         key="pacs008_txId"
     )
+
+    # Tax-specific fields
+    if fedwire_type == 'tax':
+        st.markdown("### Tax Payment Information")
+
+        # Define valid tax type codes from the document
+        VALID_TAX_TYPES = [
+            '88042', '88047', '10400', '10402', '10404', '10406', '10407',
+            '72005', '72007', '09405', '09407', '94105', '94107', '94104',
+            '94405', '94407', '09455', '09457', '99046', '99047', '99042',
+            '10417', '10416', '10412', '10425', '10427', '11206', '11207',
+            '11202', '11200', '22907', '84894'
+        ]
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.session_state.form_data['pacs008']['taxId'] = st.text_input(
+                "Tax ID (TIN/EIN) *",
+                value=st.session_state.form_data['pacs008']['taxId'],
+                key="pacs008_taxId",
+                help="9-digit Tax Identification Number or Employer Identification Number",
+                max_chars=9
+            )
+
+            st.session_state.form_data['pacs008']['taxType'] = st.selectbox(
+                "Tax Type Code *",
+                options=VALID_TAX_TYPES,
+                index=VALID_TAX_TYPES.index(st.session_state.form_data['pacs008']['taxType']) if
+                st.session_state.form_data['pacs008']['taxType'] in VALID_TAX_TYPES else 0,
+                key="pacs008_taxType",
+                help="5-character tax type code as specified by IRS"
+            )
+
+        with col2:
+            current_year = datetime.datetime.now().year
+            st.session_state.form_data['pacs008']['taxYear'] = st.text_input(
+                "Tax Year *",
+                value=st.session_state.form_data['pacs008']['taxYear'] or str(current_year),
+                key="pacs008_taxYear",
+                help="4-digit tax year (YYYY)",
+                max_chars=4
+            )
+
+            tax_periods = [
+                ('MM01', 'January'), ('MM02', 'February'), ('MM03', 'March'), ('MM04', 'April'),
+                ('MM05', 'May'), ('MM06', 'June'), ('MM07', 'July'), ('MM08', 'August'),
+                ('MM09', 'September'), ('MM10', 'October'), ('MM11', 'November'), ('MM12', 'December')
+            ]
+
+            period_options = [f"{code} ({month})" for code, month in tax_periods]
+            period_values = [code for code, month in tax_periods]
+
+            current_period_index = 0
+            if st.session_state.form_data['pacs008']['taxPeriod'] in period_values:
+                current_period_index = period_values.index(st.session_state.form_data['pacs008']['taxPeriod'])
+
+            selected_period = st.selectbox(
+                "Tax Period *",
+                options=period_options,
+                index=current_period_index,
+                key="pacs008_taxPeriod_select",
+                help="Select the tax month"
+            )
+
+            # Extract the code part (first 4 characters)
+            st.session_state.form_data['pacs008']['taxPeriod'] = selected_period[:4]
 
     st.markdown("### Debtor Details")
     col1, col2, col3 = st.columns(3)
@@ -858,158 +995,220 @@ else:  # pacs008
         )
 
     st.markdown("### Creditor Details")
+
+    if fedwire_type == 'tax':
+        # For tax payments, creditor name should be taxpayer name
+        st.info(
+            "For tax payments: If paying your own taxes, Creditor Name = Debtor Name. If paying on behalf of someone, Creditor Name = Taxpayer Name (format: LAST, FIRST for individuals)")
+        # Creditor agent is fixed for tax payments
+        st.info("Creditor Agent for tax payments is automatically set to Internal Revenue Service")
+
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.session_state.form_data['pacs008']['cdtrNm'] = st.text_input("Creditor Name (Cdtr.Nm)",
-                                                                        value=st.session_state.form_data['pacs008'][
-                                                                            'cdtrNm'], key="pacs008_cdtrNm")
-        st.session_state.form_data['pacs008']['cdtrStrtNm'] = st.text_input("Creditor Street (Cdtr.PstlAdr.StrtNm)",
+        if fedwire_type == 'tax':
+            st.session_state.form_data['pacs008']['cdtrNm'] = st.text_input(
+                "Taxpayer Name (Cdtr.Nm) *",
+                value=st.session_state.form_data['pacs008']['cdtrNm'],
+                key="pacs008_cdtrNm",
+                help="For individuals: LAST, FIRST format. For business: Business Name"
+            )
+        else:
+            st.session_state.form_data['pacs008']['cdtrNm'] = st.text_input("Creditor Name (Cdtr.Nm)",
                                                                             value=st.session_state.form_data['pacs008'][
-                                                                                'cdtrStrtNm'], key="pacs008_cdtrStrtNm")
-        st.session_state.form_data['pacs008']['cdtrBldgNb'] = st.text_input(
-            "Creditor Building Number (Cdtr.PstlAdr.BldgNb)", value=st.session_state.form_data['pacs008']['cdtrBldgNb'],
-            key="pacs008_cdtrBldgNb")
+                                                                                'cdtrNm'], key="pacs008_cdtrNm")
+
+        if fedwire_type != 'tax':
+            st.session_state.form_data['pacs008']['cdtrStrtNm'] = st.text_input("Creditor Street (Cdtr.PstlAdr.StrtNm)",
+                                                                                value=
+                                                                                st.session_state.form_data['pacs008'][
+                                                                                    'cdtrStrtNm'],
+                                                                                key="pacs008_cdtrStrtNm")
+            st.session_state.form_data['pacs008']['cdtrBldgNb'] = st.text_input(
+                "Creditor Building Number (Cdtr.PstlAdr.BldgNb)",
+                value=st.session_state.form_data['pacs008']['cdtrBldgNb'],
+                key="pacs008_cdtrBldgNb")
     with col2:
-        st.session_state.form_data['pacs008']['cdtrPstCd'] = st.text_input("Creditor Post Code (Cdtr.PstlAdr.PstCd)",
-                                                                           value=st.session_state.form_data['pacs008'][
-                                                                               'cdtrPstCd'], key="pacs008_cdtrPstCd")
-        st.session_state.form_data['pacs008']['cdtrTwnNm'] = st.text_input("Creditor Town Name (Cdtr.PstlAdr.TwnNm)",
-                                                                           value=st.session_state.form_data['pacs008'][
-                                                                               'cdtrTwnNm'], key="pacs008_cdtrTwnNm")
+        if fedwire_type != 'tax':
+            st.session_state.form_data['pacs008']['cdtrPstCd'] = st.text_input(
+                "Creditor Post Code (Cdtr.PstlAdr.PstCd)",
+                value=st.session_state.form_data['pacs008'][
+                    'cdtrPstCd'], key="pacs008_cdtrPstCd")
+            st.session_state.form_data['pacs008']['cdtrTwnNm'] = st.text_input(
+                "Creditor Town Name (Cdtr.PstlAdr.TwnNm)",
+                value=st.session_state.form_data['pacs008'][
+                    'cdtrTwnNm'], key="pacs008_cdtrTwnNm")
     with col3:
-        st.session_state.form_data['pacs008']['cdtrCtry'] = st.text_input("Creditor Country (Cdtr.PstlAdr.Ctry)",
-                                                                          value=st.session_state.form_data['pacs008'][
-                                                                              'cdtrCtry'], key="pacs008_cdtrCtry",
-                                                                          max_chars=2,
-                                                                          help="Use 2-letter ISO country codes (e.g., US, GB, DE)")
+        if fedwire_type != 'tax':
+            st.session_state.form_data['pacs008']['cdtrCtry'] = st.text_input("Creditor Country (Cdtr.PstlAdr.Ctry)",
+                                                                              value=
+                                                                              st.session_state.form_data['pacs008'][
+                                                                                  'cdtrCtry'], key="pacs008_cdtrCtry",
+                                                                              max_chars=2,
+                                                                              help="Use 2-letter ISO country codes (e.g., US, GB, DE)")
 
-        # Dynamic account field for creditor based on rules
-        cdtr_country = st.session_state.form_data['pacs008'].get('cdtrCtry', 'GB')
-        cdtr_acct_label = get_account_field_label(pacs008_channel_type_lower, fedwire_type, cdtr_country, 'Creditor')
-        cdtr_acct_help = get_account_field_help(pacs008_channel_type_lower, fedwire_type, cdtr_country)
+            # Dynamic account field for creditor based on rules
+            cdtr_country = st.session_state.form_data['pacs008'].get('cdtrCtry', 'GB')
+            cdtr_acct_label = get_account_field_label(pacs008_channel_type_lower, fedwire_type, cdtr_country,
+                                                      'Creditor')
+            cdtr_acct_help = get_account_field_help(pacs008_channel_type_lower, fedwire_type, cdtr_country)
 
-        st.session_state.form_data['pacs008']['cdtrAcctIBAN'] = st.text_input(
-            cdtr_acct_label,
-            value=st.session_state.form_data['pacs008']['cdtrAcctIBAN'],
-            key="pacs008_cdtrAcctIBAN",
-            help=cdtr_acct_help
+            st.session_state.form_data['pacs008']['cdtrAcctIBAN'] = st.text_input(
+                cdtr_acct_label,
+                value=st.session_state.form_data['pacs008']['cdtrAcctIBAN'],
+                key="pacs008_cdtrAcctIBAN",
+                help=cdtr_acct_help
+            )
+
+    # Optional Parties (not for tax payments)
+    if fedwire_type != 'tax':
+        st.markdown("### Optional Parties")
+        st.session_state.form_data['pacs008']['initgPtyNm'] = st.text_input(
+            "Initiating Party Name (InitgPty.Nm)",
+            value=st.session_state.form_data['pacs008']['initgPtyNm'],
+            key="pacs008_initgPtyNm",
+            help="Optional. Will be included in XML if provided."
+        )
+        st.session_state.form_data['pacs008']['ultmtDbtrNm'] = st.text_input(
+            "Ultimate Debtor Name (UltmtDbtr.Nm)",
+            value=st.session_state.form_data['pacs008']['ultmtDbtrNm'],
+            key="pacs008_ultmtDbtrNm",
+            help="Optional. Will be included in XML if provided."
+        )
+        st.session_state.form_data['pacs008']['ultmtCdtrNm'] = st.text_input(
+            "Ultimate Creditor Name (UltmtCdtr.Nm)",
+            value=st.session_state.form_data['pacs008']['ultmtCdtrNm'],
+            key="pacs008_ultmtCdtrNm",
+            help="Optional. Will be included in XML if provided."
         )
 
+        # Dynamic input fields for Creditor Agent (not for tax payments)
+        st.markdown("#### Creditor Agent")
+        if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'domestic':
+            st.session_state.form_data['pacs008']['cdtrAgtMmbId'] = st.text_input("USABA Member ID *", value=
+            st.session_state.form_data['pacs008']['cdtrAgtMmbId'], key="pacs008_cdtrAgtMmbId",
+                                                                                  help="When USABA Member ID is provided, Name and Address fields become mandatory")
+        elif pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international':
+            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
+            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
+        else:  # SWIFT
+            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
+            st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
 
-    st.markdown("### Optional Parties")
-    st.session_state.form_data['pacs008']['initgPtyNm'] = st.text_input(
-        "Initiating Party Name (InitgPty.Nm)",
-        value=st.session_state.form_data['pacs008']['initgPtyNm'],
-        key="pacs008_initgPtyNm",
-        help="Optional. Will be included in XML if provided."
-    )
-    st.session_state.form_data['pacs008']['ultmtDbtrNm'] = st.text_input(
-        "Ultimate Debtor Name (UltmtDbtr.Nm)",
-        value=st.session_state.form_data['pacs008']['ultmtDbtrNm'],
-        key="pacs008_ultmtDbtrNm",
-        help="Optional. Will be included in XML if provided."
-    )
-    st.session_state.form_data['pacs008']['ultmtCdtrNm'] = st.text_input(
-        "Ultimate Creditor Name (UltmtCdtr.Nm)",
-        value=st.session_state.form_data['pacs008']['ultmtCdtrNm'],
-        key="pacs008_ultmtCdtrNm",
-        help="Optional. Will be included in XML if provided."
-    )
-        # Dynamic input fields for Creditor Agent
-    st.markdown("#### Creditor Agent")
-    if pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'domestic':
-        st.session_state.form_data['pacs008']['cdtrAgtMmbId'] = st.text_input("USABA Member ID *", value=
-        st.session_state.form_data['pacs008']['cdtrAgtMmbId'], key="pacs008_cdtrAgtMmbId",
-                                                                              help="When USABA Member ID is provided, Name and Address fields become mandatory")
-    elif pacs008_channel_type_lower == 'fedwire' and fedwire_type == 'international':
-        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
-        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
-    else:  # SWIFT
-        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'] = st.text_input("BICFI", value=
-        st.session_state.form_data['pacs008']['cdtrAgtBICFI_tx'], key="pacs008_cdtrAgtBICFI_tx")
+        # Check if USABA fields should be mandatory for creditor agent
+        cdtr_usaba_mandatory = (pacs008_channel_type_lower == 'fedwire' and
+                                fedwire_type == 'domestic' and
+                                st.session_state.form_data['pacs008'].get('cdtrAgtMmbId', '').strip())
 
-    # Check if USABA fields should be mandatory for creditor agent
-    cdtr_usaba_mandatory = (pacs008_channel_type_lower == 'fedwire' and
-                            fedwire_type == 'domestic' and
-                            st.session_state.form_data['pacs008'].get('cdtrAgtMmbId', '').strip())
+        cdtr_name_help = "* Mandatory when USABA Member ID is provided" if cdtr_usaba_mandatory else ""
 
-    cdtr_name_help = "* Mandatory when USABA Member ID is provided" if cdtr_usaba_mandatory else ""
-
-    st.session_state.form_data['pacs008']['cdtrAgtNm'] = st.text_input(
-        f"Name {'*' if cdtr_usaba_mandatory else ''}",
-        value=st.session_state.form_data['pacs008']['cdtrAgtNm'],
-        key="pacs008_cdtrAgtNm",
-        help=cdtr_name_help
-    )
-    st.session_state.form_data['pacs008']['cdtrAgtStrtNm'] = st.text_input(
-        f"Street Name {'*' if cdtr_usaba_mandatory else ''}",
-        value=st.session_state.form_data['pacs008']['cdtrAgtStrtNm'],
-        key="pacs008_cdtrAgtStrtNm",
-        help=cdtr_name_help
-    )
-    st.session_state.form_data['pacs008']['cdtrAgtBldgNb'] = st.text_input("Building Number", value=
-    st.session_state.form_data['pacs008']['cdtrAgtBldgNb'], key="pacs008_cdtrAgtBldgNb")
-    st.session_state.form_data['pacs008']['cdtrAgtPstCd'] = st.text_input("Post Code", value=
-    st.session_state.form_data['pacs008']['cdtrAgtPstCd'], key="pacs008_cdtrAgtPstCd")
-    st.session_state.form_data['pacs008']['cdtrAgtTwnNm'] = st.text_input(
-        f"Town Name {'*' if cdtr_usaba_mandatory else ''}",
-        value=st.session_state.form_data['pacs008']['cdtrAgtTwnNm'],
-        key="pacs008_cdtrAgtTwnNm",
-        help=cdtr_name_help
-    )
-    st.session_state.form_data['pacs008']['cdtrAgtCtry'] = st.text_input(
-        f"Country {'*' if cdtr_usaba_mandatory else ''}",
-        value=st.session_state.form_data['pacs008']['cdtrAgtCtry'],
-        key="pacs008_cdtrAgtCtry",
-        help=f"{cdtr_name_help} Use 2-letter ISO country codes (e.g., US, GB, DE)",
-        max_chars=2
-    )
+        st.session_state.form_data['pacs008']['cdtrAgtNm'] = st.text_input(
+            f"Name {'*' if cdtr_usaba_mandatory else ''}",
+            value=st.session_state.form_data['pacs008']['cdtrAgtNm'],
+            key="pacs008_cdtrAgtNm",
+            help=cdtr_name_help
+        )
+        st.session_state.form_data['pacs008']['cdtrAgtStrtNm'] = st.text_input(
+            f"Street Name {'*' if cdtr_usaba_mandatory else ''}",
+            value=st.session_state.form_data['pacs008']['cdtrAgtStrtNm'],
+            key="pacs008_cdtrAgtStrtNm",
+            help=cdtr_name_help
+        )
+        st.session_state.form_data['pacs008']['cdtrAgtBldgNb'] = st.text_input("Building Number", value=
+        st.session_state.form_data['pacs008']['cdtrAgtBldgNb'], key="pacs008_cdtrAgtBldgNb")
+        st.session_state.form_data['pacs008']['cdtrAgtPstCd'] = st.text_input("Post Code", value=
+        st.session_state.form_data['pacs008']['cdtrAgtPstCd'], key="pacs008_cdtrAgtPstCd")
+        st.session_state.form_data['pacs008']['cdtrAgtTwnNm'] = st.text_input(
+            f"Town Name {'*' if cdtr_usaba_mandatory else ''}",
+            value=st.session_state.form_data['pacs008']['cdtrAgtTwnNm'],
+            key="pacs008_cdtrAgtTwnNm",
+            help=cdtr_name_help
+        )
+        st.session_state.form_data['pacs008']['cdtrAgtCtry'] = st.text_input(
+            f"Country {'*' if cdtr_usaba_mandatory else ''}",
+            value=st.session_state.form_data['pacs008']['cdtrAgtCtry'],
+            key="pacs008_cdtrAgtCtry",
+            help=f"{cdtr_name_help} Use 2-letter ISO country codes (e.g., US, GB, DE)",
+            max_chars=2
+        )
 
     st.markdown("### Transaction Details")
     col1, col2 = st.columns(2)
     with col1:
         # Instructed Amount (what beneficiary receives)
-        st.session_state.form_data['pacs008']['instdAmt'] = st.number_input(
-            f"Instructed Amount (InstdAmt) - {secondary_ccy}",
-            value=float(st.session_state.form_data['pacs008']['instdAmt']),
-            min_value=0.01,
-            step=0.01,
-            format="%.2f",
-            key="pacs008_instdAmt",
-            help=f"Amount the beneficiary will receive in {secondary_ccy}"
-        )
+        if fedwire_type == 'tax':
+            st.session_state.form_data['pacs008']['instdAmt'] = st.number_input(
+                "Tax Payment Amount (USD)",
+                value=float(st.session_state.form_data['pacs008']['instdAmt']),
+                min_value=0.01,
+                max_value=9999999999.99,  # Just under $10 billion as per requirements
+                step=0.01,
+                format="%.2f",
+                key="pacs008_instdAmt",
+                help="Amount must be greater than zero and up to a penny less than $10 billion. Include interest and penalty if applicable."
+            )
+        else:
+            primary_ccy = st.session_state.form_data['pacs008']['primaryCurrency']
+            secondary_ccy = st.session_state.form_data['pacs008']['secondaryCurrency']
+            st.session_state.form_data['pacs008']['instdAmt'] = st.number_input(
+                f"Instructed Amount (InstdAmt) - {secondary_ccy}",
+                value=float(st.session_state.form_data['pacs008']['instdAmt']),
+                min_value=0.01,
+                step=0.01,
+                format="%.2f",
+                key="pacs008_instdAmt",
+                help=f"Amount the beneficiary will receive in {secondary_ccy}"
+            )
 
         # Calculate settlement amount
-        current_exchange_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
-        settlement_amount = st.session_state.form_data['pacs008']['instdAmt']
+        if fedwire_type == 'tax':
+            # For tax payments, settlement and instructed amounts are the same (USD)
+            settlement_amount = st.session_state.form_data['pacs008']['instdAmt']
+        else:
+            current_exchange_rate = st.session_state.form_data['pacs008'].get('exchangeRate')
+            settlement_amount = st.session_state.form_data['pacs008']['instdAmt']
 
-        if fx_needed and current_exchange_rate:
-            # For FX conversion: settlement amount = instructed amount / exchange rate
-            settlement_amount = round(st.session_state.form_data['pacs008']['instdAmt'] / current_exchange_rate, 2)
+            fx_needed = needs_exchange_rate(payment_type, 'US', primary_ccy, secondary_ccy)
+            if fx_needed and current_exchange_rate:
+                # For FX conversion: settlement amount = instructed amount / exchange rate
+                settlement_amount = round(st.session_state.form_data['pacs008']['instdAmt'] / current_exchange_rate, 2)
 
         st.session_state.form_data['pacs008']['intrBkSttlmAmt'] = settlement_amount
 
         # Display settlement amount (read-only)
-        st.number_input(
-            f"Settlement Amount (IntrBkSttlmAmt) - {primary_ccy}",
-            value=settlement_amount,
-            disabled=True,
-            format="%.2f",
-            help=f"Interbank settlement amount in {primary_ccy} (calculated automatically)"
-        )
+        if fedwire_type == 'tax':
+            st.number_input(
+                "Settlement Amount (USD)",
+                value=settlement_amount,
+                disabled=True,
+                format="%.2f",
+                help="Settlement amount (same as payment amount for tax payments)"
+            )
+        else:
+            st.number_input(
+                f"Settlement Amount (IntrBkSttlmAmt) - {primary_ccy}",
+                value=settlement_amount,
+                disabled=True,
+                format="%.2f",
+                help=f"Interbank settlement amount in {primary_ccy} (calculated automatically)"
+            )
 
     with col2:
-        st.session_state.form_data['pacs008']['ustrdRmtInf'] = st.text_area("Unstructured Remittance Info",
-                                                                            st.session_state.form_data['pacs008'][
-                                                                                'ustrdRmtInf'],
-                                                                            key="pacs008_ustrdRmtInf")
+        if fedwire_type != 'tax':
+            st.session_state.form_data['pacs008']['ustrdRmtInf'] = st.text_area("Unstructured Remittance Info",
+                                                                                st.session_state.form_data['pacs008'][
+                                                                                    'ustrdRmtInf'],
+                                                                                key="pacs008_ustrdRmtInf")
 
-        st.session_state.form_data['pacs008']['chrgBr'] = st.selectbox(
-            "Charge Bearer",
-            options=["SHAR", "DEBT", "CRED"],
-            index=0,  # Default to SHAR if you want
-            key="pacs008_chrgBr"
-        )
+            st.session_state.form_data['pacs008']['chrgBr'] = st.selectbox(
+                "Charge Bearer",
+                options=["DEBT", "CRED", "SHAR"],
+                index=2,  # Default to SHAR if you want
+                key="pacs008_chrgBr"
+            )
+        else:
+            st.info("For tax payments:")
+            st.write("- Charge Bearer is automatically set to DEBT")
+            st.write("- Remittance information uses structured tax format")
 
 if st.button("Generate XML", key="generate_xml_button"):
     # Validate USABA fields if pacs008 and Fedwire
@@ -1019,9 +1218,14 @@ if st.button("Generate XML", key="generate_xml_button"):
         validation_errors = validate_usaba_fields(st.session_state.form_data['pacs008'], pacs008_channel_type_lower,
                                                   fedwire_type)
 
+        # Add tax-specific validation
+        if fedwire_type == 'tax':
+            tax_errors = validate_tax_fields(st.session_state.form_data['pacs008'])
+            validation_errors.extend(tax_errors)
+
     if validation_errors:
         # Display errors
-        st.markdown("### ⚠️ Validation Errors")
+        st.markdown("### Warning Validation Errors")
         for error in validation_errors:
             st.markdown(f'<div class="error-message">{error}</div>', unsafe_allow_html=True)
 
