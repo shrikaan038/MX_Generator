@@ -446,6 +446,29 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
                     <Ustrd>{data.get('ustrdRmtInf', '')}</Ustrd>
                 </RmtInf>
             """
+    # Add ChrgsInf field for CRED charge bearer
+
+    charges_info = ""
+    charge_bearer = data.get('chrgBr', 'SHAR')
+    if charge_bearer == "CRED":
+        if channel_type == 'fedwire' and fedwire_type != 'international':
+            charges_info = f"""
+            <ChrgsInf>
+                <Amt Ccy="{secondary_ccy}">10.00</Amt>
+                <Agt>
+                    {get_agent_xml('CdtrAgt', channel_type, fedwire_type, data)}
+                </Agt>
+            </ChrgsInf>
+                """
+        else:
+            charges_info = f"""
+            <ChrgsInf>
+                <Amt Ccy="{secondary_ccy}">10.00</Amt>
+                <Agt>
+                    {get_agent_xml('CdtrAgt', channel_type, fedwire_type, data)}
+                </Agt>
+            </ChrgsInf>
+                """
 
     # Generate the XML content
     xml_content = f"""{app_hdr}
@@ -479,6 +502,7 @@ def generate_pacs008_xml(data, channel_type, fedwire_type):
             <InstdAmt Ccy="{secondary_ccy}">{instructed_amount:.2f}</InstdAmt>
             {exchange_rate_xml}
             <ChrgBr>{data.get('chrgBr', 'SHAR')}</ChrgBr>
+            {charges_info}
             <InstgAgt>
                 {get_inst_agent_xml('InstgAgt', channel_type, data)}
             </InstgAgt>
