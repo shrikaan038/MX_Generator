@@ -1,96 +1,128 @@
 # 🧾 ISO 20022 XML Payment Message Generator
 
-A user-friendly Streamlit-based utility for generating **ISO 20022 XML messages** — specifically `pacs.008` and `pain.001` — compatible with **SWIFT CBPR+** and **Fedwire** standards.
+A user-friendly **Streamlit** application for generating **ISO 20022 XML payment messages** — specifically `pacs.008` and `pain.001` — compatible with **SWIFT CBPR+** and **Fedwire** standards.
 
 Supports:
-- `pacs.008.001.08` for **FI-to-FI Customer Credit Transfers**
-  - Channel: SWIFT (CBPR+) or Fedwire
-- `pain.001.001.09` for **Customer Credit Transfer Initiation**
+
+* `pacs.008.001.08` for **FI-to-FI Customer Credit Transfers**
+
+  * Channels: **SWIFT (CBPR+)**, **Fedwire Domestic**, **Fedwire International**, **Fedwire US Tax Payment**
+* `pain.001.001.09` for **Customer Credit Transfer Initiation (SEPA)**
 
 ---
 
 ## 🚀 Features
 
-- Generate ISO 20022 XML messages with dynamic form inputs
-- Supports both **SWIFT** (with AppHdr) and **Fedwire** formats
-- View and copy generated XML directly from the web UI
-- Streamlit-powered interface (easy to use, no coding required)
+* Generate ISO 20022 XML messages with dynamic form inputs
+* Supports **SWIFT (with AppHdr)** and **Fedwire** formats
+* Handles **Domestic**, **International**, and **Tax Payment** scenarios for Fedwire
+* Automated **exchange rate fetching & caching** (with fallback to cache)
+* Validation rules for **USABA routing numbers** and **IRS tax payment fields**
+* SEPA-compliant `pain.001` (IBAN mandatory)
+* View and copy generated XML directly in the browser
+* Built with **Streamlit** — no coding knowledge required
 
 ---
 
 ## 📁 Folder Structure
-├── app.py # Main Streamlit UI application
-├── xml_generator.py # Logic for XML message creation
-├── .gitignore # Ignores IDE/cache/env files
-├── README.md # Project overview and usage
-└── requirements.txt # Required packages (optional)
+
+```
+├── app.py             # Main Streamlit UI application
+├── xml_generator.py   # Core logic for XML message creation
+├── exchange_rate_cache.json  # Cached FX rates (auto-generated)
+├── .gitignore         # Ignores IDE/cache/env files
+├── README.md          # Project overview and usage
+└── requirements.txt   # Required packages
+```
+
+---
 
 ## ⚙️ Installation
 
 1. **Clone the repository:**
+
    ```bash
    git clone https://github.com/your-repo/iso20022-generator.git
    cd iso20022-generator
-Set up a virtual environment (optional but recommended):
+   ```
 
-python -m venv venv
+2. **Set up a virtual environment (optional but recommended):**
 
-venv/bin/activate  
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On macOS/Linux
+   venv\\Scripts\\activate   # On Windows
+   ```
 
+3. **Install dependencies:**
 
-### Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-pip install streamlit
+---
 
-##  How to Use
-🔌 Run the App
+## 💻 How to Use
 
-streamlit run app.py
+1. Run the app:
 
-## Use in Browser
-The app will open in your default browser (usually http://localhost:8501).
+   ```bash
+   streamlit run app.py
+   ```
 
-### Steps
-Choose message type: pacs.008 or pain.001
+2. Open in browser (default: [http://localhost:8501](http://localhost:8501))
 
-For pacs.008, choose either:
+3. Select message type:
 
-SWIFT — adds mandatory AppHdr
+   * **pacs.008** (SWIFT / Fedwire Domestic / Fedwire International / US Tax Payment)
+   * **pain.001** (SEPA)
 
-Fedwire — skips AppHdr, uses ABA routing (USABA)
+4. Fill in form fields:
 
-Fill in form details:
+   * Parties, account IBANs / numbers, BIC codes / USABA routing numbers
+   * Amounts, remittance info, settlement method
+   * Tax details (for IRS payments)
 
-Parties, account IBANs, BIC codes
+5. Click **Generate XML**
 
-Amounts, remittance info, settlement method
+6. Copy or download the generated XML from the output section
 
-Click "Generate XML"
+---
 
-Copy or download your generated XML from the output section
+## 📜 Output Example
 
-## Output Example
-The XML message includes:
+* Proper namespaces and schema locations
+* Optional **AppHdr** block (for SWIFT pacs.008)
+* Interbank settlement data
+* Remittance details and structured tax payment info (if applicable)
+* Ultimate Debtor/Creditor and Initiating Party fields supported
 
-Proper namespaces and schema locations
+---
 
-Optional AppHdr block (for SWIFT only)
+## ✅ Validation
 
-Interbank settlement data, remittance details, and party info
+You can validate the generated XML using:
 
-## Validation
-You can validate the generated XML:
+* ISO 20022 XSD schemas (via `xmllint`, IDE plugins, or XML tools)
+* [SWIFT MyStandards](https://www.swift.com/mystandards)
 
-With ISO 20022 XSD files (via xmllint or IDEs)
+---
 
-Or via SWIFT MyStandards https://www.swift.com/mystandards
+## 📌 Improvements
 
-## License
-This project is open-source and provided under the MIT License.
+* Added **Initiating Party**, **Ultimate Debtor**, and **Ultimate Creditor** support
+* Added **US Tax Payment** (Fedwire) support with structured remittance info
+* Added **FX exchange rate fetching and caching**
+* Enhanced **validation** for tax fields and USABA agent details
 
-## Support
-Feel free to open an Issue or contribute improvements via Pull Requests!
+---
 
-## improvements
-Add Initiating Party, Ultimate creditor and debtor                                                        
-Pacs008 Incoming
+## 📄 License
+
+This project is open-source and provided under the **MIT License**.
+
+---
+
+## 🤝 Contributing
+
+Feel free to open an **Issue** or submit a **Pull Request** with improvements or bug fixes.
